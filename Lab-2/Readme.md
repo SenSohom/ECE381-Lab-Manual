@@ -1,549 +1,444 @@
-# Lab-2 : YOLO Manual
+# Lab 2: Real-Time Image Regression and Point Tracking on the Jetson Orin Nano
 
-## ⚠️ IMPORTANT SETUP INSTRUCTIONS
+**Course:** ECE 381 — Applied Machine Learning
 
-**Please DO NOT use Headless Mode** as it creates compatibility issues with display forwarding and GUI applications.
+## Lab objectives
 
-### Before Starting the Lab:
+In this lab, you will:
 
-1. **Connect all peripherals to your Jetson Orin Nano:**
-   - Power cable
-   - DisplayPort (DP) cable
-   - Ethernet cable
-   - Keyboard & Mouse
-   - USB Webcam
+- Run the same Docker-based lab environment used in Lab 1 on the Jetson Orin Nano.
+- Use the prepared regression notebook to collect images and label target locations with `(x, y)` coordinates.
+- Complete two three-point tracking tasks:
+  1. Facial-feature tracking: left eye, right eye, and nose.
+  2. DIY tracking: three distinct target points of your choice from the lab.
+- Train and compare two transfer-learning models: ResNet-18 and ResNet-34.
+- Compare three dataset sizes and three epoch settings.
+- Use training loss and live coordinate predictions to recognize underfitting, overfitting, and reliable tracking.
 
-2. **Set Jetson to Maximum Power Mode:**
-   - Click the **power icon** in the **top-right corner** of the desktop
-   - Select **MAXN SUPER** power mode
-   - This ensures maximum performance for model training and inference
+You will complete **9 experiments for each task-model combination** and **36 experiments in total**.
 
-**Power Mode Menu Reference:**
-
-![Power Mode Setup](power_mode_setup.jpg)
-
-> **Note:** These setup steps are crucial for proper operation of OpenCV GUI windows, webcam access, and optimal performance during training.
-
----
-
-## Part 1: Docker Setup
-
-### Pre-Step: Open Terminal
-**Open a terminal on your Jetson Orin Nano.** All subsequent commands in this lab will be executed in this terminal.
-
----
-
-### Pre-Step: Create Lab2-Workspace Folder
-**Create a new working directory for this lab.**
-
-> **Note:** Your Jetson kit has a number written on it (e.g., 1, 2, 3, etc.). Replace `<kit#>` with your kit number in the command below.
-
-```bash
-mkdir /home/ece381-<kit#>/Documents/Lab2-Workspace
-```
-
-**Example:** If your kit number is 15, the command would be:
-```bash
-mkdir /home/ece381-15/Documents/Lab2-Workspace
+```text
+2 tracking tasks × 2 models × 3 dataset sizes × 3 epoch settings
+= 36 total experiments
 ```
 
 ---
 
-### Step 1: Enable X11 Display Forwarding
-```bash
-xhost +local:docker
+## 1. Set up the Jetson and open JupyterLab
+
+### Step 1 — Connect and power the Jetson
+
+1. Find your **kit number** on the box.
+2. Connect the following devices to the Jetson:
+   - Mouse
+   - Keyboard
+   - Webcam
+3. Power on the Jetson and finish its initial setup.
+
+> [!IMPORTANT]
+> Connect the webcam **before** starting the Docker container. The notebook may produce errors if the webcam is not connected.
+
+### Jetson Orin Nano password
+
+The Jetson login password follows this format:
+
+```text
+machinelearning<Kit#>
 ```
 
-### Step 2: Launch Docker Container
-```bash
-sudo docker run -it --ipc=host --runtime=nvidia --device=/dev/video0 \
-  -v /home/ece381-<kit#>/Documents/Lab2-Workspace:/workspace \
-  -e DISPLAY=$DISPLAY \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  ultralytics/ultralytics:latest-jetson-jetpack6 bash
+Replace `<Kit#>` with the number written on your kit's box. Do not type the angle brackets or the `#` symbol.
+
+For example, if your kit number is **#23**, the password is:
+
+```text
+machinelearning23
 ```
 
-> **Note:** Replace `<kit#>` with your kit number (same as in the previous step).
+### Step 2 — Start the Docker container
 
-### Step 3: Install Display Libraries
-```bash
-apt-get update && apt-get install -y libgtk2.0-dev libsm6 libxext6
-```
-
-### Step 4: Install Build Dependencies
-```bash
-apt-get install -y build-essential cmake git libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev
-```
-
-### Step 5: Clone and Build OpenCV with GTK Support
-
-#### 5.1: Install Ninja Build System
+Open a terminal on the Jetson and run:
 
 ```bash
-apt install ninja-build
+./docker_dli_run.sh
 ```
 
-#### 5.2: Clone OpenCV Repository
+This is the same Docker environment used in Lab 1. The first launch may download and install many files, so allow several minutes for it to finish.
 
-```bash
-cd /tmp
-git clone --depth 1 https://github.com/opencv/opencv.git
+You will work in a prepared JupyterLab notebook. Your responsibilities are to:
+
+- Execute the notebook cells in the correct order.
+- Configure each tracking task.
+- Collect and annotate balanced coordinate data.
+- Select the required model architecture.
+- Change the dataset size and epoch settings for each experiment.
+- Record and interpret the results.
+
+### Step 3 — Open JupyterLab
+
+When the container is ready, the terminal will display a JupyterLab URL. The URL shown in the original lab slides is:
+
+```text
+http://192.168.0.149:8888
 ```
 
-#### 5.3: Navigate to OpenCV Directory and Create Build Folder
+Hold <kbd>Ctrl</kbd> and click the URL in the terminal, or copy and paste it into a web browser.
 
-```bash
-cd opencv
-mkdir build && cd build
+> [!NOTE]
+> The Jetson's IP address may be different. Always use the complete URL printed in **your terminal**.
+
+When JupyterLab asks for a password, enter:
+
+```text
+dlinano
 ```
 
-#### 5.4: Configure OpenCV with CMake
-
-```bash
-cmake -G Ninja \
-  -D CMAKE_BUILD_TYPE=Release \
-  -D CMAKE_INSTALL_PREFIX=/usr/local \
-  -D WITH_GTK=ON \
-  ..
-```
-
-#### 5.5: Compile OpenCV with Ninja
-
-```bash
-ninja -j$(nproc)
-```
-
-> **Note:** This step will take some time as it compiles OpenCV with all available CPU cores. The `$(nproc)` command automatically detects the number of available processor cores.
-
-#### 5.6: Install OpenCV
-
-```bash
-ninja install
-```
-
-#### 5.7: Update Library Cache
-
-```bash
-ldconfig
-```
-
-> **Note:** This command updates the system's library cache to recognize the newly installed OpenCV libraries.
+This is the **JupyterLab password**. It is different from the Jetson login password.
 
 ---
 
-### Step 6: Save Docker Changes and Create Custom Image
+## 2. Open the image-regression notebook
 
-**Objective:** Save all the changes made to the Docker container (OpenCV, display libraries, and dependencies) as a new custom Docker image for future use.
+In the JupyterLab file browser:
 
-#### 6.1: Open a New Terminal
+1. Open the `regression` folder.
+2. Open `regression_interactive.ipynb`.
+3. Execute the code cells in order from top to bottom after making the required task and model changes described below.
 
-Open a **new terminal window** on your Jetson Orin Nano (do not close the current Docker container terminal yet).
+The notebook cells perform the following tasks:
 
-#### 6.2: List Active Docker Containers
+- **Camera setup:** Sets the image size to 224 × 224 and starts the USB camera. Shut down any other notebook kernel that is using the camera.
+- **Task setup:** Defines the task, the three tracking categories, data augmentation, and dataset directory.
+- **Data collection:** Displays a live image that saves an image and its target coordinate when you click a point.
+- **Model definition:** Loads a pretrained ResNet model and replaces its final layer with six outputs—an `(x, y)` pair for each of the three target categories.
+- **Live execution:** Predicts a target coordinate and draws the predicted point on the camera image.
+- **Training and evaluation:** Trains the model using mean squared error (MSE) loss.
+- **Interactive tool:** Combines the collection, training, testing, and model-saving controls.
 
-Run the following command to see all active Docker containers:
-
-```bash
-sudo docker ps -a
-```
-
-This will return a list of Docker containers. The **first entry** is your latest container where all the changes have been made. **Copy the Container ID** from the output.
-
-#### 6.3: Commit the Container to Create a New Image
-
-Execute the following command, replacing `<Container-ID>` with the ID you copied:
-
-```bash
-sudo docker commit <Container-ID> ultralytics-opencv:jetson-jetpack6
-```
-
-**Example:** If your Container ID is `a1b2c3d4e5f6`, the command would be:
-```bash
-sudo docker commit a1b2c3d4e5f6 ultralytics-opencv:jetson-jetpack6
-```
-
-Once the command executes successfully, you will see a response confirming the commit.
-
-#### 6.4: Close Both Terminals
-
-After the commit is complete, close both the Docker container terminal and the new terminal you just opened.
-
-#### 6.5: Use the Custom Image for Future Sessions
-
-From now on, you can skip all the installation steps (Steps 3, 4, and 5) and directly launch the Docker container with your custom image using:
-
-```bash
-sudo docker run -it --ipc=host --runtime=nvidia --device=/dev/video0 \
-  -v /home/ece381-<kit#>/Documents/Lab2-Workspace:/workspace \
-  -e DISPLAY=$DISPLAY \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  ultralytics-opencv:jetson-jetpack6 bash
-```
-
-> **Note:** Replace `<kit#>` with your kit number (same as before).
-
-This custom image includes all the necessary libraries (OpenCV with GTK support, display libraries, and build dependencies), so you won't need to reinstall them in future sessions.
+> [!IMPORTANT]
+> This is a **regression** lab. The notebook reports coordinate loss, not classification accuracy or class probability. A useful model places its predicted point close to the selected target on previously unseen camera views.
 
 ---
 
-## Part 2: Running Object Detection
+## 3. Configure the two tracking tasks
 
-### Step 1: Navigate to Workspace
-```bash
-cd /workspace
+Each task must contain exactly three categories. The notebook creates two outputs per category, so three categories produce six model outputs:
+
+```text
+(x1, y1, x2, y2, x3, y3)
 ```
 
----
+### 3.1 Task 1 — Facial-feature tracking
 
-### Step 2: Convert Model to TensorRT Engine Format
-**Convert the YOLOv11n PyTorch model (.pt) to TensorRT engine format (.engine) for optimized inference on Jetson.**
-
-Create a file named `ModelConversion.py`:
-```python
-from ultralytics import YOLO
-
-# Load a YOLOv11n PyTorch model
-model = YOLO("yolo11n.pt")
-
-# Export the model to TensorRT engine format
-model.export(format="engine")  # creates 'yolo11n.engine'
-
-# Load and verify the exported TensorRT model
-trt_model = YOLO("yolo11n.engine")
-
-# Run inference to verify
-results = trt_model("https://ultralytics.com/images/bus.jpg")
-```
-
-Then run the conversion:
-```bash
-python ModelConversion.py
-```
-
-This will:
-- Convert the PyTorch model to TensorRT engine format
-- Optimize it for your Jetson's GPU architecture
-- Provide faster inference times (22-25ms per frame)
-
----
-### Step 3: Run Object Detection Script
-
-**Create a file named `ObjectDetect.py`:**
+Use the following task settings:
 
 ```python
-import cv2
-from ultralytics import YOLO
-import os
-
-# Load YOLO model using TensorRT engine
-model = YOLO("yolo11n.engine", task="detect")
-
-output_folder = "processed_frames"
-os.makedirs(output_folder, exist_ok=True)
-
-frame_counter = 0
-
-# Open webcam (0 for default webcam)
-cap = cv2.VideoCapture(0)
-
-while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-        break
-
-    # Run YOLO inference on the frame
-    results = model(frame)
-
-    # Process and visualize results
-    for result in results:
-        for box in result.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])  # Bounding box coordinates
-            conf = box.conf[0].item()  # Confidence score
-            cls = int(box.cls[0])  # Class index
-            label = f"{model.names[cls]} {conf:.2f}"  # Class label with confidence
-
-            # Draw bounding box and label
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 
-                        0.5, (0, 255, 0), 2)
-
-    # Display the frame
-    frame_filename = os.path.join(output_folder, f"frame_{frame_counter:04d}.jpg")
-    cv2.imshow("YOLOv11n Object Detection", frame)
-    #cv2.imwrite(frame_filename, frame)
-    frame_counter += 1
-
-    # Exit on 'q' key
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-# Release resources
-cap.release()
-cv2.destroyAllWindows()
-```
-**Run the script:**
-```bash
-python ObjectDetect.py
+TASK = 'face'
+CATEGORIES = ['left_eye', 'right_eye', 'nose']
+DATASETS = ['A']
 ```
 
-This will:
-- Load the YOLOv11n TensorRT engine model
-- Capture video from your webcam in real-time
-- Display object detection with bounding boxes and confidence scores
-- Press 'q' to exit the application
+You must track:
 
----
+1. Center of the subject's left eye
+2. Center of the subject's right eye
+3. Tip or center of the nose
 
-## Part 3: Object Detection Task
+Use the subject's anatomical left and right, not the left and right sides of the displayed image. If the webcam preview is mirrored, confirm the convention before collecting data and use it consistently throughout the lab.
 
-### Task 3.1: Detect and Screenshot Objects
-**Objective:** Identify 10 different objects around your desk using the pretrained YOLOv11n model.
+### 3.2 Task 2 — DIY three-point tracking
 
-**Instructions:**
-1. Run `python ObjectDetect.py` (from Part 2)
-2. Place 10 different objects on/around your desk
-3. Capture 10 screenshots showing successful detections with confidence scores
-4. Save screenshots with filenames: `detection_01.png`, `detection_02.png`, ..., `detection_10.png`
-5. Include these in your lab report
+Design a coordinate-regression task using **three distinct target points** found on an object or setup in the lab. The three targets should normally be visible together in the same camera frame.
 
----
+Possible examples include:
 
-### Task 3.2: Build Custom Datasets
-**Objective:** Create three datasets with increasing sizes for training custom object detection models.
+- Three colored stickers placed on an object
+- The tip, clip, and cap end of a pen
+- Three marked corners or locations on a lab component
+- Three distinct points on a handheld tool or printed shape
 
-**Classes:** 
-- Class 1: Oscilloscope
-- Class 2: Jetson (Jetson Orin Nano board)
-
-**Dataset Requirements:**
-- **Dataset 1:** 10 images of Oscilloscope + 10 images of Jetson (20 total)
-- **Dataset 2:** 25 images of Oscilloscope + 25 images of Jetson (50 total)
-- **Dataset 3:** 50 images of Oscilloscope + 50 images of Jetson (100 total)
-
-**Annotation Tool:** Use Roboflow for annotation and automatic YOLO format conversion
-- Visit: https://roboflow.com
-- Create account and project
-- Upload images and draw bounding boxes
-- Export in YOLOv11 format
-
-**Refer to the video ["Annotate-using-Roboflow.mp4"](https://drive.google.com/file/d/1f_iMva0YXieoD2cwlBEcx_3YUIdhVSjy/view?usp=sharing)** to learn how to use the tool and download the custom dataset.
-
-**After Exporting from Roboflow:**
-
-The exported dataset will be downloaded as a **ZIP file** to your `Downloads` folder.
-
-**Steps to extract and organize:**
-
-1. **Open the Downloads folder** using the file manager (GUI)
-
-2. **Locate the downloaded ZIP file**
-
-3. **Right-click on the ZIP file and select "Extract Here"**
-
-4. **Move the extracted folder to Lab2-Workspace:**
-   - Open the file manager and navigate to `Documents/Lab2-Workspace`
-   - Cut/paste the extracted folder into Lab2-Workspace
-   - Rename the folder based on dataset size:
-     - First dataset (10 images per class) → Rename to `Dataset-10`
-     - Second dataset (25 images per class) → Rename to `Dataset-25`
-     - Third dataset (50 images per class) → Rename to `Dataset-50`
-
-> **Note:** After extracting, you should have three folders (Dataset-10, Dataset-25, Dataset-50) in your Lab2-Workspace.
-
-**Expected Directory Structure after extraction:**
-```
-Lab2-Workspace/
-├── Dataset-10/
-│   ├── train/
-│   │   ├── images/
-│   │   └── labels/
-│   ├── valid/
-│   │   ├── images/
-│   │   └── labels/
-│   ├── test/
-│   │   ├── images/
-│   │   └── labels/
-│   └── data.yaml
-├── Dataset-25/
-│   ├── train/
-│   │   ├── images/
-│   │   └── labels/
-│   ├── valid/
-│   │   ├── images/
-│   │   └── labels/
-│   ├── test/
-│   │   ├── images/
-│   │   └── labels/
-│   └── data.yaml
-└── Dataset-50/
-    ├── train/
-    │   ├── images/
-    │   └── labels/
-    ├── valid/
-    │   ├── images/
-    │   └── labels/
-    ├── test/
-    │   ├── images/
-    │   └── labels/
-    └── data.yaml
-```
-
----
-
-### Task 3.3: Train Models on Three Datasets
-**Objective:** Train YOLOv11n on all three datasets and record performance metrics.
-
-**Training Script Template:**
-
-> **Important:** For each dataset (Dataset-10, Dataset-25, Dataset-50), you will train the model **3 times** with different epoch values: **25, 50, and 100 epochs**. This means you will have a total of **9 training runs** (3 datasets × 3 epoch values). Replace the `epochs` parameter in the script accordingly.
-
-> Also replace `Dataset-<#>` with the actual dataset folder name (Dataset-10, Dataset-25, or Dataset-50) based on which dataset you are training. To create the python file follow the steps mentioned in your ppt. Then copy paste this code. 
-
-Create a file named `train_model.py`:
-```python
-from ultralytics import YOLO
-
-model = YOLO("yolo11n.pt")
-results = model.train(
-    data="Dataset-<#>/data.yaml",
-    epochs=100,
-    imgsz=640,
-    device=0,
-    workers=0,
-    batch=4,
-    patience=30,
-    save=True,
-    project="runs/detect",
-    name="oscilloscope_jetson_<#>"
-)
-
-metrics = model.val()
-model.export(format="engine")
-```
-
-**Usage Examples:**
-
-- For Dataset-10 training, replace `Dataset-<#>` with `Dataset-10` and `oscilloscope_jetson_<#>` with `oscilloscope_jetson_10`
-- For Dataset-25 training, replace `Dataset-<#>` with `Dataset-25` and `oscilloscope_jetson_<#>` with `oscilloscope_jetson_25`
-- For Dataset-50 training, replace `Dataset-<#>` with `Dataset-50` and `oscilloscope_jetson_<#>` with `oscilloscope_jetson_50`
-
-Then run the training. Make sure to close all the other applications before you start the training process, it includes your browsers, text editors etc, only your terminal should be open and nothing else:
-```bash
-python train_model.py
-```
-
-**Metrics to Record:**
-- mAP@50 (mean Average Precision at 50% IoU)
-- mAP@50-95 (mean Average Precision at 50-95% IoU)
-- Precision
-- Recall
-- Training time (epochs)
-- Inference speed (ms per image)
-
-All these things will be printed in the terminal during the training phase for each epoch. Once the training is finished you can copy the metrics from the terminal, paste it in a txt file and then use the help of any AI tool to plot the curves and attach to your Lab Report.
-
-**Create a comparison table in your lab report:**
-
-| Metric | Dataset_10 | Dataset_25 | Dataset_50 |
-|--------|-----------|-----------|-----------|
-| mAP@50 | | | |
-| mAP@50-95 | | | |
-| Precision | | | |
-| Recall | | | |
-| Training Time | | | |
-
-And all the Curves generated.
-
----
-### Task 3.4: Inference on Trained Models
-**Objective:** Test the trained models on new images and record detection results.
-
-**Inference Script:**
-
-Create a file named `inference.py`:
+Do not reuse the facial landmarks from Task 1. Choose short, descriptive category names and document what each point represents. For example:
 
 ```python
-import cv2
-from ultralytics import YOLO
-import os
-
-# Load YOLO model using TensorRT engine
-model = YOLO("/ultralytics/runs/detect/runs/detect/oscilloscope_jetson_<#>/weights/best.engine", task="detect")
-
-output_folder = "processed_frames"
-os.makedirs(output_folder, exist_ok=True)
-
-frame_counter = 0
-
-# Open webcam (0 for default webcam)
-cap = cv2.VideoCapture(0)
-
-while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-        break
-
-    # Run YOLO inference on the frame
-    results = model(frame)
-
-    # Process and visualize results
-    for result in results:
-        for box in result.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])  # Bounding box coordinates
-            conf = box.conf[0].item()  # Confidence score
-            cls = int(box.cls[0])  # Class index
-            label = f"{model.names[cls]} {conf:.2f}"  # Class label with confidence
-
-            # Draw bounding box and label
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 
-                        0.5, (0, 255, 0), 2)
-
-    # Display the frame
-    frame_filename = os.path.join(output_folder, f"frame_{frame_counter:04d}.jpg")
-    cv2.imshow("YOLOv11n Object Detection", frame)
-    #cv2.imwrite(frame_filename, frame)
-    frame_counter += 1
-
-    # Exit on 'q' key
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-# Release resources
-cap.release()
-cv2.destroyAllWindows()
+TASK = 'pen_tracking'
+CATEGORIES = ['tip', 'clip', 'cap_end']
+DATASETS = ['A']
 ```
 
-**Instructions:**
+Your actual DIY task and category names may be different.
 
-1. Update the model path with your trained model (e.g., `oscilloscope_jetson_10`, `oscilloscope_jetson_25`, or `oscilloscope_jetson_50`)
-
-2. Run the inference script:
-```bash
-python inference.py
-```
-
-3. The script will open a webcam feed with real-time detections showing:
-   - Bounding boxes around detected objects
-   - Object class labels (Oscilloscope or Jetson)
-   - Confidence scores for each detection
-
-4. **Capture Screenshots:**
-   - Take at least **5 screenshots** for each trained model showing successful detections
-   - Make sure the screenshots clearly show:
-     - Object class names
-     - Confidence scores
-     - Bounding boxes
-   - Save screenshots with filenames: `inference_model_10_01.png`, `inference_model_10_02.png`, etc.
-
-5. **Include all screenshots in your lab report** with annotations explaining the detections and comparing performance across different dataset sizes.
-
-**Example Screenshot Naming Convention:**
-- `inference_model_10_01.png` - First screenshot from 10-image dataset model
-- `inference_model_25_03.png` - Third screenshot from 25-image dataset model
-- `inference_model_50_02.png` - Second screenshot from 50-image dataset model
+> [!IMPORTANT]
+> After changing `TASK` or `CATEGORIES`, restart the notebook kernel and run the cells again from the beginning. This prevents a previous task's dataset, model, or callbacks from remaining active.
 
 ---
 
-## Lab Report Due Date : 20 Feb 2026
+## 4. Collect coordinate data
 
+Each saved entry consists of an image, a category, and the `(x, y)` location you clicked for that category.
+
+For each task:
+
+1. Select the first category from the **category** menu.
+2. Place the subject or object in front of the camera.
+3. Click the exact target location in the live camera image.
+4. Confirm that the saved-image preview shows a marker at the intended location.
+5. Repeat while changing position, distance, angle, lighting, and background.
+6. Select the other categories and repeat the process.
+7. Keep the number of labeled images balanced across all three categories.
+
+For the facial-feature task, collect examples with reasonable changes in:
+
+- Head position and rotation
+- Distance from the camera
+- Facial expression
+- Lighting direction and brightness
+- Background
+- Subject, when permitted by the instructor
+
+For the DIY task, vary the object's position and orientation while keeping all three selected targets visible whenever possible.
+
+### Annotation-quality rules
+
+- Click the same physical point for a category every time.
+- Do not alternate between the center and edge of a feature.
+- Do not save a sample if the selected target is hidden or outside the frame.
+- Avoid collecting many nearly identical images.
+- Keep all three categories balanced at each required dataset size.
+- Review the saved-image preview after every click and recollect obvious annotation mistakes.
+
+> [!NOTE]
+> “Dataset size” in this lab means the number of labeled images **per target category**. With three categories, 10 images per category gives 30 labeled samples, 50 gives 150 samples, and 200 gives 600 samples.
+
+---
+
+## 5. Configure ResNet-18 and ResNet-34
+
+You will train each task using both ResNet-18 and ResNet-34. In the notebook's **Model** cell, use one architecture at a time while keeping the output dimension unchanged.
+
+The following model-selection pattern may be used:
+
+```python
+import torch
+import torchvision
+
+device = torch.device('cuda')
+output_dim = 2 * len(dataset.categories)
+
+MODEL_NAME = 'resnet18'  # change to 'resnet34' when required
+
+if MODEL_NAME == 'resnet18':
+    model = torchvision.models.resnet18(pretrained=True)
+elif MODEL_NAME == 'resnet34':
+    model = torchvision.models.resnet34(pretrained=True)
+else:
+    raise ValueError('MODEL_NAME must be resnet18 or resnet34')
+
+model.fc = torch.nn.Linear(model.fc.in_features, output_dim)
+model = model.to(device)
+```
+
+The final layer produces:
+
+- Outputs 0–1: first category `(x, y)`
+- Outputs 2–3: second category `(x, y)`
+- Outputs 4–5: third category `(x, y)`
+
+Use the same batch size, optimizer, preprocessing, augmentation, dataset, and other training settings for both architectures. Only the model architecture, dataset size, and required epoch count should differ.
+
+> [!IMPORTANT]
+> Begin every experiment from a fresh pretrained model initialization. Do not train one model for 5 epochs and then continue that same model to 25 or 50 epochs. Restart or reinitialize the model and optimizer before every experiment.
+
+---
+
+## 6. Train one experiment
+
+For every required experiment:
+
+1. Stop **live** mode before changing or training the model.
+2. Confirm the correct task, categories, dataset, and model architecture.
+3. Reinitialize the pretrained model and optimizer.
+4. Enter the required number of epochs in the notebook widget.
+5. Click **train**.
+6. Wait for training to finish.
+7. Record the final displayed MSE loss.
+8. Test all three categories using live execution.
+9. Save the required inference evidence.
+
+The epoch widget counts down during training. Enter the required epoch value again before starting a new experiment.
+
+Use a descriptive model filename if you save a checkpoint. A recommended format is:
+
+```text
+<Task>-<Model>-D<DatasetSize>-E<Epochs>.pth
+```
+
+Examples:
+
+```text
+Face-ResNet18-D50-E25.pth
+DIY-ResNet34-D200-E50.pth
+```
+
+---
+
+## 7. Test coordinate tracking in real time
+
+After training:
+
+1. Enable **live** mode.
+2. Select the first category.
+3. Confirm whether the predicted point follows the correct target.
+4. Repeat for the other two categories.
+5. Test positions, angles, distances, lighting conditions, and backgrounds that were not copied exactly from the training data.
+6. Capture a three-panel figure or three clearly labeled screenshots showing the prediction for all three target categories.
+
+When testing, consider both:
+
+- **Precision:** How close is the predicted point to the correct target?
+- **Stability:** Does the point remain on the target, or does it jump when the image changes slightly?
+
+> [!WARNING]
+> If the camera freezes, shut down the notebook kernel from the JupyterLab menu. Restart the kernel and run all cells again. Collected images stored in the mounted data directory remain available, but an unsaved trained model must be trained again.
+
+---
+
+## 8. Lab report deliverables
+
+### 8.1 Tracking tasks
+
+Complete both tasks:
+
+1. **Facial-feature tracking**
+   - `left_eye`
+   - `right_eye`
+   - `nose`
+2. **DIY three-point tracking**
+   - Three student-selected target points from an object or setup in the lab
+
+Clearly list and define the three category names used for each task.
+
+### 8.2 Required models
+
+Train every required experiment with both:
+
+1. **ResNet-18**
+2. **ResNet-34**
+
+Use the same collected images for both models so that the comparison is fair.
+
+### 8.3 Required dataset sizes and epochs
+
+For each task and model, train all combinations of:
+
+- **Dataset sizes:** 10, 50, and 200 labeled images per target category
+- **Epoch settings:** 5, 25, and 50 epochs
+
+Build each task's dataset cumulatively:
+
+1. Begin with 10 images per category.
+2. Add images until you have 50 images per category.
+3. Add images until you have 200 images per category.
+
+At a given dataset size, use the same images for every epoch setting and for both model architectures.
+
+| Experiment | Labeled images per category | Total labeled samples | Epochs |
+|---:|---:|---:|---:|
+| 1 | 10 | 30 | 5 |
+| 2 | 10 | 30 | 25 |
+| 3 | 10 | 30 | 50 |
+| 4 | 50 | 150 | 5 |
+| 5 | 50 | 150 | 25 |
+| 6 | 50 | 150 | 50 |
+| 7 | 200 | 600 | 5 |
+| 8 | 200 | 600 | 25 |
+| 9 | 200 | 600 | 50 |
+
+Repeat this nine-experiment matrix for each task-model combination:
+
+```text
+Facial features + ResNet-18:  9 experiments
+Facial features + ResNet-34:  9 experiments
+DIY tracking + ResNet-18:     9 experiments
+DIY tracking + ResNet-34:     9 experiments
+------------------------------------------------
+Total:                       36 experiments
+```
+
+### 8.4 Required evidence for every experiment
+
+For **each of the 36 experiments**, include:
+
+1. Tracking task and three target-category names.
+2. Model architecture: ResNet-18 or ResNet-34.
+3. Number of labeled images per category.
+4. Total number of labeled samples.
+5. Number of epochs.
+6. Final displayed MSE loss.
+7. One composite inference figure containing three labeled panels, or three labeled screenshots, showing:
+   - The input visible in the camera feed.
+   - The selected target category.
+   - The predicted point overlaid on the image.
+8. A short observation about prediction precision and stability.
+
+Use a consistent experiment name so your results, checkpoints, and figures are easy to identify:
+
+```text
+<Task>-<Model>-D<DatasetSize>-E<Epochs>
+```
+
+Example:
+
+```text
+Face-ResNet34-D50-E25
+```
+
+### 8.5 Recommended results table
+
+Create one copy of this table for each task-model combination, for a total of four tables:
+
+| Experiment | Images per category | Epochs | Final MSE loss | Three-target inference figure | Precision/stability notes |
+|---:|---:|---:|---:|---|---|
+| 1 | 10 | 5 |  |  |  |
+| 2 | 10 | 25 |  |  |  |
+| 3 | 10 | 50 |  |  |  |
+| 4 | 50 | 5 |  |  |  |
+| 5 | 50 | 25 |  |  |  |
+| 6 | 50 | 50 |  |  |  |
+| 7 | 200 | 5 |  |  |  |
+| 8 | 200 | 25 |  |  |  |
+| 9 | 200 | 50 |  |  |  |
+
+Place or reference the corresponding inference evidence for every row.
+
+### 8.6 Results discussion
+
+For each tracking task, discuss:
+
+- How tracking changed when the dataset increased from 10 to 50 to 200 labeled images per category.
+- How tracking changed when the epoch setting increased from 5 to 25 to 50.
+- Whether lower training loss consistently produced better live tracking.
+- Which combinations appeared to underfit.
+- Which combinations appeared to overfit or become less reliable on new views.
+- Which facial feature or DIY target was easiest and hardest to track, and why.
+- How robust the predictions were to position, angle, distance, lighting, background, and partial occlusion.
+- How ResNet-18 and ResNet-34 compared in loss, training time, prediction precision, and stability.
+- Whether the additional depth of ResNet-34 produced a meaningful improvement for the collected dataset.
+- Which dataset-size, epoch, and model combination produced the most reliable result.
+
+Do not rely only on training loss. Use the live overlay behavior on new camera views when explaining model quality.
+
+---
+
+## Final submission checklist
+
+- [ ] I completed facial-feature tracking for the left eye, right eye, and nose.
+- [ ] I completed a DIY tracking task with three distinct target points from the lab.
+- [ ] I clearly defined all target categories and used them consistently.
+- [ ] I trained both ResNet-18 and ResNet-34 for both tasks.
+- [ ] I completed all nine dataset-size and epoch combinations for every task-model pair.
+- [ ] My report contains results for all 36 experiments.
+- [ ] Every experiment includes the final MSE loss.
+- [ ] Every experiment includes inference evidence for all three target categories.
+- [ ] I compared the effects of dataset size and epoch count.
+- [ ] I compared ResNet-18 with ResNet-34 using the same datasets.
+- [ ] I discussed underfitting, overfitting, prediction precision, stability, and the best-performing configuration.
+- [ ] I shut down the camera or notebook kernel when finished.
