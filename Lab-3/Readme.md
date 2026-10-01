@@ -1,68 +1,644 @@
-# Lab-3 : NanoOwl Vision Transformer
+# Lab3-Part1 : Ultralytics YOLO on NVIDIA Jetson with Docker
 
-## ⚠️ IMPORTANT SETUP INSTRUCTIONS
+This guide shows how to set up a **persistent Docker environment** on an NVIDIA Jetson for running Ultralytics YOLO with a USB camera.
 
-**Please DO NOT use Headless Mode** as it creates compatibility issues with display forwarding and GUI applications.
+Supported demo tasks include:
 
-### Before Starting the Lab:
+- Object detection
+- Object tracking
+- Pose estimation
+- Instance segmentation
 
-1. **Connect all peripherals to your Jetson Orin Nano:**
-   - Power cable
-   - DisplayPort (DP) cable
-   - Ethernet cable
-   - Keyboard & Mouse
-   - USB Webcam
+The setup uses:
 
-2. **Set Jetson to Maximum Power Mode:**
-   - Click the **power icon** in the **top-right corner** of the desktop
-   - Select **MAXN SUPER** power mode
-   - This ensures maximum performance for model training and inference
-
-**Power Mode Menu Reference:**
-
-![Power Mode Setup](power_mode_setup.jpg)
-
-> **Note:** These setup steps are crucial for proper operation of OpenCV GUI windows, webcam access, and optimal performance during training.
+- NVIDIA Jetson
+- `dustynv/l4t-pytorch:r36.4.0`
+- USB camera (`/dev/video0`)
+- Ultralytics YOLO
+- OpenCV GUI through X11
+- A persistent host workspace
 
 ---
 
-## Step 1: System Update
+## 1. Create a Persistent Workspace
 
-Open a terminal and run the following commands to update the system:
+Create a folder on the Jetson host:
+
 ```bash
-sudo apt update
-sudo apt upgrade
+mkdir -p ~/yolo-workspace && cd ~/yolo-workspace
 ```
 
-When prompted, enter the machine password:
-```
-machinelearning<kit#>
-```
+Create the Python demo file:
 
-Once the update is done, please restart your Jetson.
-
-> **Note:** The upgrade step may take a few minutes depending on the number of packages to update. Wait for it to complete fully before proceeding.
----
-
-## Step 2: Pull the Docker Image
-
-Run the following command to pull the NanoOWL Docker image:
 ```bash
-sudo docker pull dustynv/nanoowl:r36.4.0
+vim realtime_yolo.py
 ```
 
-> **Note:** This is a large image (~6GB) and will take several minutes depending on your network speed. Wait for it to complete fully before proceeding.
+Press `i` to enter insert mode, then paste the following complete code into `realtime_yolo.py`:
+
+```python
+"""
+Real-Time YOLO Demo
+
+Tasks:
+    1. Object Detection
+    2. Pose Estimation
+    3. Object Tracking
+    4. Instance Segmentation
+
+Students can also change:
+    CONF -> confidence threshold
+    IOU  -> NMS IoU threshold
+
+Run:
+    python3 realtime_yolo.py
+"""
+
+import cv2
+from ultralytics import YOLO
+
+
+# ============================================================
+# Module 1: Configuration
+# ============================================================
+
+# Choose one task:
+# "detect"  -> object detection
+# "pose"    -> human pose estimation
+# "track"   -> object tracking
+# "segment" -> instance segmentation
+#
+# Example values:
+# TASK = "detect"
+# TASK = "pose"
+# TASK = "track"
+# TASK = "segment"
+TASK = "pose"
+
+
+# YOLO confidence threshold:
+# Controls how confident YOLO must be before showing a detection.
+#
+# Lower value:
+#   -> more detections
+#   -> may include more false positives
+#
+# Higher value:
+#   -> fewer detections
+#   -> keeps only more confident detections
+#
+# Example values to try:
+# CONF = 0.10   # very permissive, many detections
+# CONF = 0.25   # common/default-style setting
+# CONF = 0.50   # stricter
+# CONF = 0.80   # very strict
+CONF = 0.25
+
+
+# YOLO IoU threshold for Non-Maximum Suppression (NMS):
+# Controls how much overlap between bounding boxes is allowed.
+#
+# Lower value:
+#   -> suppress overlapping boxes more aggressively
+#
+# Higher value:
+#   -> allow more overlapping boxes to remain
+#
+# Example values to try:
+# IOU = 0.20   # aggressive suppression
+# IOU = 0.50   # medium suppression
+# IOU = 0.70   # common/default-style setting
+# IOU = 0.90   # keeps many overlapping boxes
+IOU = 0.70
+
+
+# Camera index:
+# 0 usually means the first USB camera.
+#
+# Example:
+# CAMERA_ID = 0   # /dev/video0
+# CAMERA_ID = 1   # /dev/video1
+CAMERA_ID = 0
+
+
+# ============================================================
+# Module 2: Load the YOLO Model
+# ============================================================
+
+if TASK == "detect":
+    # General object detection model.
+    model = YOLO("yolo11n.pt")
+
+elif TASK == "pose":
+    # Detect people and estimate body keypoints.
+    model = YOLO("yolo11n-pose.pt")
+
+elif TASK == "track":
+    # Tracking uses a normal detection model.
+    # YOLO adds a tracker on top of the detections.
+    model = YOLO("yolo11n.pt")
+
+elif TASK == "segment":
+    # Detect objects and predict a pixel-level mask for each object.
+    model = YOLO("yolo11n-seg.pt")
+
+else:
+    raise ValueError("TASK must be: detect, pose, track, or segment")
+
+
+# ============================================================
+# Module 3: Open the Camera
+# ============================================================
+
+camera = cv2.VideoCapture(CAMERA_ID)
+
+if not camera.isOpened():
+    raise RuntimeError("Cannot open camera")
+
+print(f"Running YOLO task: {TASK}")
+print(f"Confidence threshold: {CONF}")
+print(f"IoU threshold: {IOU}")
+print("Press 'q' to quit.")
+
+
+# ============================================================
+# Module 4: Real-Time Processing Loop
+# ============================================================
+
+while True:
+
+    # --------------------------------------------------------
+    # Step 1: Capture one frame from the camera
+    # --------------------------------------------------------
+    success, frame = camera.read()
+
+    if not success:
+        print("Failed to read camera frame")
+        break
+
+    # --------------------------------------------------------
+    # Step 2: Run YOLO
+    # --------------------------------------------------------
+
+    if TASK == "track":
+        # persist=True tells YOLO to remember objects between frames.
+        # This allows an object to keep the same tracking ID.
+        results = model.track(
+            frame,
+            persist=True,
+            conf=CONF,
+            iou=IOU,
+            verbose=False
+        )
+    else:
+        # Detection, pose, and segmentation all use normal inference.
+        results = model(
+            frame,
+            conf=CONF,
+            iou=IOU,
+            verbose=False
+        )
+
+    # --------------------------------------------------------
+    # Step 3: Draw the YOLO results
+    # --------------------------------------------------------
+
+    # results[0] corresponds to the current frame.
+    #
+    # plot() automatically draws:
+    #   detection     -> bounding boxes + class names
+    #   pose          -> skeleton + keypoints
+    #   tracking      -> boxes + tracking IDs
+    #   segmentation  -> masks + bounding boxes
+    annotated_frame = results[0].plot()
+
+    # --------------------------------------------------------
+    # Step 4: Show the result
+    # --------------------------------------------------------
+
+    cv2.imshow(
+        f"YOLO - {TASK}",
+        annotated_frame
+    )
+
+    # --------------------------------------------------------
+    # Step 5: Check keyboard input
+    # --------------------------------------------------------
+
+    # waitKey(1) waits approximately 1 ms.
+    # Press "q" to stop the program.
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
+
+
+# ============================================================
+# Module 5: Cleanup
+# ============================================================
+
+camera.release()
+cv2.destroyAllWindows()
+```
+
+After pasting:
+
+1. Press `Esc`.
+2. Type `:wq`.
+3. Press `Enter` to save and exit.
+
+Your Python file is now stored permanently on the host at:
+
+```text
+~/yolo-workspace/realtime_yolo.py
+```
+
+Students can later edit `TASK`, `CONF`, and `IOU` near the top of the file to observe how YOLO behavior changes.
 
 ---
 
-## Step 3: Run the Docker Container
+## 2. Allow Docker to Use the Desktop Display
 
-First, create the output directory on your host machine:
+The YOLO demo uses `cv2.imshow()`, so the Docker container needs access to the Jetson's X11 display.
+
+Run this on the Jetson host:
+
+```bash
+xhost +local:docker
+```
+
+---
+
+## 3. Create the Docker Container
+
+Create the container **once**:
+
+```bash
+sudo docker run -it \
+  --runtime nvidia \
+  --device=/dev/video0 \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v ~/yolo-workspace:/workspace \
+  --name yolo-jetson \
+  dustynv/l4t-pytorch:r36.4.0 \
+  bash
+```
+
+### What these options do
+
+| Option | Purpose |
+|---|---|
+| `--runtime nvidia` | Gives the container access to the Jetson GPU |
+| `--device=/dev/video0` | Gives the container access to the USB camera |
+| `-e DISPLAY=$DISPLAY` | Passes the host display into Docker |
+| `-v /tmp/.X11-unix:/tmp/.X11-unix` | Allows OpenCV/Qt windows to appear on the host desktop |
+| `-v ~/yolo-workspace:/workspace` | Makes the Python code persistent |
+| `--name yolo-jetson` | Gives the container a reusable name |
+
+> This setup is for a **USB/V4L2 camera**. You do not need `/tmp/argus_socket`, which is mainly used for Jetson CSI/Argus cameras.
+
+---
+
+## 4. Install Python Dependencies
+
+Run the following commands **inside the container**.
+
+### Install a Jetson-compatible NumPy version
+
+The Jetson PyTorch build may be incompatible with NumPy 2.x, so use NumPy 1.26.4:
+
+```bash
+python3 -m pip uninstall -y numpy
+
+python3 -m pip install numpy==1.26.4 \
+  -i https://pypi.org/simple
+```
+
+### Install Ultralytics
+
+```bash
+python3 -m pip install ultralytics \
+  -i https://pypi.org/simple
+```
+
+### Install the YOLO tracking dependency
+
+```bash
+python3 -m pip install "lap>=0.5.12" \
+  -i https://pypi.org/simple
+```
+
+Some packages may upgrade NumPy again during installation, so reinstall the correct version afterward:
+
+```bash
+python3 -m pip install --force-reinstall numpy==1.26.4 \
+  -i https://pypi.org/simple
+```
+
+---
+
+## 5. Verify the Environment
+
+Run:
+
+```bash
+python3 - <<'PY'
+import numpy
+import torch
+import lap
+from ultralytics import YOLO
+
+print("NumPy:", numpy.__version__)
+print("PyTorch:", torch.__version__)
+print("CUDA available:", torch.cuda.is_available())
+
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+
+print("Ultralytics environment ready.")
+PY
+```
+
+You should see:
+
+- NumPy `1.26.4`
+- PyTorch information
+- `CUDA available: True`
+- Your Jetson GPU name
+- `Ultralytics environment ready.`
+
+---
+
+## 6. Run the YOLO Demo
+
+Inside the container:
+
+```bash
+cd /workspace
+python3 realtime_yolo.py
+```
+
+Press:
+
+```text
+Ctrl+C
+```
+
+to stop the program from the terminal.
+
+---
+
+## 7. Change the YOLO Task
+
+Edit the program:
+
+```bash
+vim /workspace/realtime_yolo.py
+```
+
+Find:
+
+```python
+TASK = "detect"
+```
+
+Change it to one of:
+
+```python
+TASK = "detect"
+TASK = "track"
+TASK = "pose"
+TASK = "segment"
+```
+
+In Vim:
+
+1. Press `i` to edit.
+2. Change `TASK`.
+3. Press `Esc`.
+4. Type `:wq`.
+5. Press `Enter`.
+
+Then rerun:
+
+```bash
+python3 /workspace/realtime_yolo.py
+```
+
+---
+
+## 8. Exit the Container
+
+When finished:
+
+```bash
+exit
+```
+
+This stops the shell session, but your container and installed Python packages remain available.
+
+Your source code also remains on the host because `/workspace` is mapped to:
+
+```text
+~/yolo-workspace
+```
+
+---
+
+## 9. Re-enter the Container Later
+
+Do **not** run `docker run` again.
+
+Start the existing container:
+
+```bash
+sudo docker start yolo-jetson
+```
+
+Enter it:
+
+```bash
+sudo docker exec -it yolo-jetson bash
+```
+
+Or use one command:
+
+```bash
+sudo docker start yolo-jetson && sudo docker exec -it yolo-jetson bash
+```
+
+Then run:
+
+```bash
+cd /workspace
+python3 realtime_yolo.py
+```
+
+---
+
+## 10. Docker Architecture
+
+```text
+Jetson Host
+│
+├── /dev/video0
+│      └── USB Camera
+│
+├── X11 Display
+│      └── /tmp/.X11-unix
+│
+├── ~/yolo-workspace/
+│      └── realtime_yolo.py
+│
+└── Docker container: yolo-jetson
+       │
+       ├── dustynv/l4t-pytorch:r36.4.0
+       ├── CUDA / PyTorch
+       ├── NumPy 1.26.4
+       ├── Ultralytics
+       ├── lap
+       ├── /dev/video0
+       ├── DISPLAY
+       └── /workspace
+```
+
+---
+
+## Common Problems
+
+### `No matching distribution found`
+
+If pip shows errors such as:
+
+```text
+Failed to establish a new connection
+Name or service not known
+```
+
+the problem may be the configured Jetson package index or DNS rather than the Python package itself.
+
+Use standard PyPI explicitly:
+
+```bash
+python3 -m pip install PACKAGE_NAME \
+  -i https://pypi.org/simple
+```
+
+### NumPy 2.x Error
+
+If you see:
+
+```text
+A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x
+```
+
+fix it with:
+
+```bash
+python3 -m pip uninstall -y numpy
+python3 -m pip install numpy==1.26.4 \
+  -i https://pypi.org/simple
+```
+
+### Tracking Fails with `No module named 'lap'`
+
+```bash
+python3 -m pip install "lap>=0.5.12" \
+  -i https://pypi.org/simple
+```
+
+### OpenCV Cannot Connect to Display
+
+If you see:
+
+```text
+qt.qpa.xcb: could not connect to display
+```
+
+run on the host:
+
+```bash
+xhost +local:docker
+```
+
+and make sure the container was created with:
+
+```bash
+-e DISPLAY=$DISPLAY
+-v /tmp/.X11-unix:/tmp/.X11-unix
+```
+
+### Container Name Already Exists
+
+If Docker reports that `/yolo-jetson` already exists, reuse it:
+
+```bash
+sudo docker start yolo-jetson
+sudo docker exec -it yolo-jetson bash
+```
+
+### Delete the Container
+
+```bash
+sudo docker rm -f yolo-jetson
+```
+
+This removes packages installed inside the container, but not files stored in `~/yolo-workspace`.
+
+---
+
+## Key Rule
+
+Create the Docker container **once** with GPU, USB camera, X11, and workspace access.
+
+After that, always reuse it with:
+
+```bash
+sudo docker start yolo-jetson
+sudo docker exec -it yolo-jetson bash
+```
+
+Do not repeatedly use `docker run`, because `docker run` creates a new container.
+
+---
+
+# Lab3-Part2: NanoOWL Vision Transformer
+
+## ⚠️ Important Setup Instructions
+
+**Do not use Headless Mode.** It can cause compatibility problems with display forwarding and GUI applications.
+
+### Before Starting the Lab
+
+Connect all required peripherals to the Jetson Orin Nano:
+
+- Power cable
+- DisplayPort (DP) cable
+- Ethernet cable
+- Keyboard and mouse
+- USB webcam
+
+Set the Jetson to maximum power mode:
+
+1. Click the **power icon** in the top-right corner of the desktop.
+2. Select **MAXN SUPER**.
+3. This ensures maximum performance for inference and training.
+
+> These setup steps are important for OpenCV GUI windows, webcam access, and overall performance.
+
+---
+
+---
+
+## Step 1: Run the NanoOWL Docker Container
+
+First create a host output directory:
+
 ```bash
 mkdir -p /home/$USER/nanoowl_outputs
 ```
 
-Then run the Docker container:
+Then start the container:
+
 ```bash
 sudo docker run -it --rm \
   --runtime nvidia \
@@ -76,18 +652,27 @@ sudo docker run -it --rm \
   /bin/bash
 ```
 
-You will know you are inside the container when your terminal prompt changes to:
-```
+When you are inside the container, the terminal prompt should look similar to:
+
+```text
 root@ubuntu:/opt/nanoowl/examples/tree_demo#
 ```
 
-> **Note:** The `/outputs` folder is shared between the container and your host machine. Any files saved to `/outputs` inside the container will be accessible on your desktop at `/home/$USER/nanoowl_outputs`.
+The `/outputs` directory is shared with the Jetson host:
+
+```text
+Container: /outputs
+Host:      /home/$USER/nanoowl_outputs
+```
+
+Files written to `/outputs` inside the container can therefore be accessed from the host.
 
 ---
 
-## Step 4: Install Required Module
+## Step 2: Install the Required Module
 
-Once inside the container, install the `aiohttp` module:
+Inside the NanoOWL container, install `aiohttp`:
+
 ```bash
 pip install --no-cache-dir \
   --index-url https://pypi.org/simple \
@@ -95,437 +680,416 @@ pip install --no-cache-dir \
   aiohttp
 ```
 
-> **Note:** This installs `aiohttp` which is required for the web server that streams the detection output to your browser. And everytime you exit the docker make sure to reinstall this module. It is a very small module so should be over within 1 minute.
+`aiohttp` is used by the web server that streams NanoOWL detection output to the browser.
+
+> This NanoOWL container uses `--rm`, so it is deleted when you exit it. You therefore need to reinstall `aiohttp` each time you create a new NanoOWL container.
 
 ---
 
-## Step 5: Set Up Model Cache Directory
+## Step 3: Set Up the Model Cache Directory
 
-Run the following commands to set up the cache directory for the ViT model:
+Run:
+
 ```bash
 rm /root/.cache/clip
 mkdir -p /root/.cache/clip
 ```
 
-> **Note:** The first command removes an incorrectly created file that conflicts with the model cache, and the second creates a proper directory in its place. This is required for the model weights to download and store correctly.
+The first command removes an incorrectly created cache file, and the second creates the proper cache directory required for CLIP model files.
 
 ---
 
-## Step 6: Run the NanoOWL Tree Demo
+## Step 4: Run the NanoOWL Tree Demo
 
-Run the following command to start the ViT detection server:
+Start the detection server:
+
 ```bash
 python3 tree_demo.py ../../data/owl_image_encoder_patch32.engine
 ```
 
-You will know the server is running successfully when you see a URL in the terminal like:
-```
+When successful, the terminal should show something similar to:
+
+```text
 ======== Running on http://0.0.0.0:7860 ========
 ```
 
-Hold `Ctrl` and click the link to open it in your browser.
+Hold `Ctrl` and click the link, or open the address in the browser.
 
-![NanoOWL Browser Demo](jetson_person_2x.gif)
+NanoOWL is optimized to run **OWL-ViT** in real time on NVIDIA Jetson Orin platforms using NVIDIA TensorRT.
 
-NanoOWL is a project that optimizes **OWL-ViT** to run 🔥 real-time 🔥 on **NVIDIA Jetson Orin Platforms** with **NVIDIA TensorRT**. NanoOWL also introduces a new "tree detection" pipeline that combines OWL-ViT and CLIP to enable nested detection and classification of anything, at any level, simply by providing text.
+It also provides a **tree detection** pipeline that combines OWL-ViT and CLIP, allowing nested detection and classification through text prompts.
 
-Type whatever prompt you like to see what works! Here are some examples:
-* Example: `[a face [a nose, an eye, a mouth]]`
-* Example: `[a face (interested, yawning / bored)]`
-* Example: `(indoors, outdoors)`
+Example prompts:
 
-> **Note:** If the webcam feed is not displayed, reload the browser and it should appear.
-
----
-
-## Lab-3 TODOs
-
-In this lab you will move beyond simply running the model — you will **interrogate it**. Using NanoOWL and the attention visualization script, you will conduct a series of structured experiments designed to reveal how the model thinks, where it succeeds, and critically, where it fails.
-
-The underlying goal is to develop intuition for how Vision Transformers differ from CNNs — not by reading about it, but by observing it directly through the model's behavior under controlled conditions. By the end of the lab you should be able to explain *why* OWL-ViT responds the way it does to different prompts, lighting conditions, and scene compositions, grounded in what you know about its architecture.
-
----
-
-### Part 1 — Setup & Baseline
-
-Before running any experiments, you need to establish a baseline. This gives you a reference point to compare against in all subsequent parts.
-
-**Step 1:** Make sure the tree_demo server is running and open in your browser. Point the webcam at yourself and type the following prompt:
+```text
+[a face [a nose, an eye, a mouth]]
+[a face (interested, yawning / bored)]
+(indoors, outdoors)
 ```
+
+Experiment with different prompts to see how the model responds.
+
+> If the webcam feed does not appear, reload the browser.
+
+---
+
+## Step 5: Guided NanoOWL Experiments
+
+Before writing the report, use the NanoOWL browser interface to perform the following short experiments. Keep the camera scene as unchanged as possible when comparing prompts.
+
+### A. Establish a Baseline
+
+Point the webcam toward a clear object or person and begin with a simple prompt such as:
+
+```text
 [a face]
 ```
 
-Record the following in your lab notebook:
-- Detection score displayed on the bounding box
-- Which region of the image the box covers
+Record:
 
-After that, close the browser, go back to your terminal and press `Ctrl + C` to stop the code. 
+- the detection score shown by NanoOWL,
+- where the bounding box appears, and
+- whether the detected region matches the concept described by the prompt.
 
-**Step 2:** Now we will run the attention heatmap script to visualize what the model is focusing on. Copy the following code:
-```python
-import torch
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from transformers import OwlViTProcessor, OwlViTForObjectDetection
-from PIL import Image
-import cv2
+This baseline will be used for comparison in the next experiments.
 
-CAMERA_DEVICE = 0
+### B. Prompt Specificity Ladder
 
-camera = cv2.VideoCapture(CAMERA_DEVICE)
-camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+Keep the same scene and make the text prompt progressively more specific. For example:
 
-if not camera.isOpened():
-    raise RuntimeError("Could not open camera")
-
-print("Camera opened. Press ENTER to capture...")
-input()
-
-re, frame = camera.read()
-if not re:
-    raise RuntimeError("Failed to read frame")
-
-camera.release()
-print("Frame captured.")
-
-cv2.imwrite("captured_frame.jpg", frame)
-image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-img_np = np.array(image)
-img_w, img_h = image.size
-
-print("Loading model...")
-processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
-model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
-model.eval()
-
-prompts = [
-    "a human face"
-]
-
-def run_prompt(prompt):
-    inputs = processor(text=[[prompt]], images=image, return_tensors="pt")
-    with torch.no_grad():
-        outputs = model(**inputs, output_attentions=True)
-
-    logits = torch.sigmoid(outputs.logits[0, :, 0])
-    boxes = outputs.pred_boxes[0]
-    best_idx = logits.argmax().item()
-    best_score = logits[best_idx].item()
-    best_box = boxes[best_idx].detach().numpy()
-
-    cx, cy, w, h = best_box
-    x1 = int((cx - w / 2) * img_w)
-    y1 = int((cy - h / 2) * img_h)
-    x2 = int((cx + w / 2) * img_w)
-    y2 = int((cy + h / 2) * img_h)
-
-    similarity = torch.sigmoid(outputs.logits[0, :, 0]).detach().numpy()
-    p_low, p_high = np.percentile(similarity, 10), np.percentile(similarity, 99)
-    similarity = np.clip((similarity - p_low) / (p_high - p_low + 1e-6), 0, 1)
-    num_patches = int(similarity.shape[0] ** 0.5)
-    attn_map = similarity.reshape(num_patches, num_patches)
-
-    attn_resized = cv2.resize(attn_map, (img_w, img_h))
-    heatmap = cv2.applyColorMap((attn_resized * 255).astype(np.uint8), cv2.COLORMAP_JET)
-    heatmap_rgb = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-    overlay = (0.5 * img_np + 0.5 * heatmap_rgb).astype(np.uint8)
-
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    cv2.putText(overlay, f"{best_score:.2f}", (x1, max(y1 - 10, 0)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-    return attn_map, overlay, best_score
-
-fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-
-for i, prompt in enumerate(prompts):
-    print(f"Running prompt: '{prompt}'...")
-    attn_map, overlay, score = run_prompt(prompt)
-
-    axes[0].imshow(img_np)
-    axes[0].set_title("Captured Image")
-    axes[0].axis("off")
-
-    axes[1].imshow(attn_map, cmap="hot")
-    axes[1].set_title("Per-Patch Score")
-    axes[1].axis("off")
-
-    axes[2].imshow(overlay)
-    axes[2].set_title("Detection + Heatmap")
-    axes[2].axis("off")
-
-plt.tight_layout()
-plt.savefig("attention_output.png", dpi=150)
-print("Saved to attention_output.png")
+```text
+(an object)
+(a person)
+(a face)
+(a face with glasses)
 ```
 
-In your Docker terminal, open the nano text editor:
-```bash
-nano attention_heatmap.py
+You may adapt the prompts to match your own scene. Observe whether the detection score, selected region, or detection result changes as more semantic information is added.
+
+### C. Wrong-Prompt Test
+
+Keep the same scene, but enter **two prompts describing objects that are not present**. For example, while only a person is visible:
+
+```text
+(a dog)
+(a car)
 ```
 
-Right-click inside the editor and select **Paste** to paste the code. Note that `Ctrl+C` and `Ctrl+V` do not work inside nano.
+Observe whether NanoOWL still returns a candidate region and how confident it is. This experiment is intended to show that an open-vocabulary model still produces similarity-based predictions and that a text prompt does not guarantee that the requested object is actually present.
 
-Once pasted, press `Ctrl+X` to exit. When prompted to save, press `Y`. You will be returned to the Docker terminal.
+### D. Tree-Prompt Refinement
 
-Verify the file was created by running:
-```bash
-ls
+Now use the tree detection interface. Start simple and refine the description of the scene over **three iterations**. For example:
+
+```text
+[a person]
+[a person [a face]]
+[a person [a face [an eye, a nose, a mouth]]]
 ```
 
-You should see `attention_heatmap.py` in the list. Then run the script:
-```bash
-python3 attention_heatmap.py
+Or, for a desk scene:
+
+```text
+[a person]
+[a person [a desk, a chair]]
+[a person [a desk [a laptop], a chair]]
 ```
 
-Point the webcam towards your face. Once you are satisfied with the angle, press `Enter` to capture the image. The model will then process it — you will know it is done when you see:
-```
-Saved to attention_output.png
-```
+For each iteration, observe what new information is detected and what is still missed. The purpose is to understand that a tree prompt can express **relationships and levels of semantic detail**, rather than only a single flat class label.
 
-Open a **new terminal** (do not close the existing one) and run:
-```bash
-sudo docker cp $(sudo docker ps -q):/opt/nanoowl/examples/tree_demo/attention_output.png ~/
-```
+### E. Small Robustness / Failure Test
 
-This transfers the output image to your Jetson home directory where you can open and view the heatmap overlaid on your captured image.
+Choose **two** of the following conditions while keeping the text prompt fixed:
 
-**Step 3:** Fill in the baseline row of your results table:
+- partial occlusion,
+- dim or very bright lighting,
+- increased distance from the camera,
+- approximately 45-degree object/person rotation.
 
-| Prompt | Detection Score | Box Location | Heatmap Concentration |
+Record how the detection score and bounding-box behavior change. You do not need to exhaustively test every condition.
+
+> The purpose of these experiments is not to prove that NanoOWL is always better than YOLO. The purpose is to observe how **text-conditioned open-vocabulary detection behaves**, including its flexibility and its failure modes.
+
+---
+
+# Lab Report Requirements
+
+The goal of the report is to demonstrate that you understand **both vision approaches and the motivation for moving from a fixed-class YOLO workflow to a text-conditioned Vision Transformer workflow**. Do not simply show that the programs run. Your report should use your own observations to explain what changed, why it changed, and when each approach is useful.
+
+Keep the report concise. A well-organized **5–7 page report including tables and screenshots** is sufficient.
+
+## Part 1 — Ultralytics YOLO Experiments
+
+Use approximately the same camera scene whenever possible so that comparisons are meaningful.
+
+### 1. Compare the Four YOLO Tasks
+
+Run:
+
+- `detect`
+- `track`
+- `pose`
+- `segment`
+
+For each task, include **one representative screenshot** and complete the following table.
+
+| Task | Main Output | Additional Information Beyond Detection | One Possible Application |
 |---|---|---|---|
-| a human face | | | |
+| Detect | | | |
+| Track | | | |
+| Pose | | | |
+| Segment | | | |
 
-**Step 4:** Repeat Steps 1 and 2 for 4 more different objects present near you (e.g., a laptop, a water bottle, a chair, a backpack).
+In a short paragraph, explain how the four tasks differ even though they all begin from visual input.
 
-For each object, you will need to update the `prompts` section of `attention_heatmap.py`. Open the file in nano:
-```bash
-nano attention_heatmap.py
+### 2. Confidence Threshold Experiment
+
+Use:
+
+```text
+TASK = "detect"
+IOU = 0.70
 ```
 
-Scroll down to the prompts section and replace `"a human face"` with the object you want to detect:
+Test:
 
-![Prompts Section](ss.png)
-
-Save the file with `Ctrl+X`, then `Y`. Run the script again:
-```bash
-python3 attention_heatmap.py
+```text
+CONF = 0.10
+CONF = 0.50
+CONF = 0.80
 ```
 
-Once you see `Saved to attention_output.png`, export the image to your home folder from the second terminal:
-```bash
-sudo docker cp $(sudo docker ps -q):/opt/nanoowl/examples/tree_demo/attention_output.png ~/
+Use a scene containing multiple visible objects.
+
+| CONF | Number of Detections | Weak / False Detections | Main Observation |
+|---|---:|---|---|
+| 0.10 | | | |
+| 0.50 | | | |
+| 0.80 | | | |
+
+Explain the trade-off between a low and high confidence threshold in **2–3 sentences**.
+
+### 3. IoU / NMS Experiment
+
+Keep:
+
+```text
+CONF = 0.25
 ```
 
-> **Note:** Rename each exported image before running the next experiment, otherwise it will be overwritten. For example:
-> ```bash
-> mv ~/attention_output.png ~/attention_laptop.png
-> ```
+Test:
 
-Add a new row to your results table for each object. In total there will be 5 entries after completion of Part-1.
-
----
-
-### Part 2 — Prompt Engineering Experiments
-
-In this part you will run systematic experiments by varying the text prompt and observing how the model responds. For each experiment, update the `prompts` section of `attention_heatmap.py`, run the script, export the output, and record your results in the tables below.
-
----
-
-#### Experiment A: Specificity Ladder
-
-Run the same scene through increasingly specific prompts. Keep the webcam pointed at your face for all 5 runs.
-
-| Prompt | Detection Score | Box Location | Heatmap Concentration |
-|---|---|---|---|
-| "an object" | | | |
-| "a person" | | | |
-| "a face" | | | |
-| "a human face with glasses" | | | |
-| "a male face with glasses and a beard" | | | |
-
-**Question:** As the prompt becomes more specific, does the detection score go up or down? Does the heatmap shift? Write 2-3 sentences explaining what you observe.
-
----
-
-#### Experiment B: Wrong Prompts
-
-Keep the webcam pointed at your face but deliberately use incorrect prompts — objects that are not present in the scene.
-
-| Prompt | Detection Score | Box Location (correct / incorrect / none) | Heatmap Concentration |
-|---|---|---|---|
-| "a dog" | | | |
-| "a car" | | | |
-| "a chair" | | | |
-
-**Question:** Does the model still return a bounding box even when the prompt is completely wrong? Where does it land and what does the heatmap look like? What does this tell you about how the model handles uncertainty?
-
----
-
-#### Experiment C: Adversarial Prompts
-
-These prompts are designed to conflict with what is actually in the scene. Keep the webcam pointed at your face.
-
-| Prompt | Detection Score | Box Location | Heatmap Concentration |
-|---|---|---|---|
-| "a face but not wearing glasses" | | | |
-| "a happy face" | | | |
-| "a sad face" | | | |
-
-> **Note:** For the happy vs sad comparison, keep the same neutral expression for both runs so the only variable is the prompt.
-
-**Question:** Does the score change between "a happy face" and "a sad face" on the same neutral expression? Does the heatmap shift between the two? What does this reveal about how the text encoder interprets emotional attributes?
-
-Repeat these experiments for each of the 5 entries from Part-1. The example is shown here for your first entry 'a face'. You have to design and change the prompts for the next 4 entries. At the end of Part-2 you should have Two different tables, Table-1 from Part-1 consisting of 5 entries and Table-2 from Part-2 consisting of 55 entries (11 for each).
-
----
-
-### Part 3 — Tree Prompt Design & Failure Mode Documentation
-
-This part has two connected activities. First you will design a hierarchical tree prompt to describe a complex scene, then you will deliberately stress-test the model to document where and why it fails.
-
----
-
-#### Activity A: Tree Prompt Design
-
-Using the tree_demo browser interface, your task is:
-
-> *"Build a tree prompt that can describe a person sitting at a desk in enough detail that someone who couldn't see the image could reconstruct the scene."*
-
-You are expected to iterate — start simple and progressively refine your tree until you are satisfied with the level of detail the model can detect. Here is an example progression to get you started:
-```
-[a person]                                                          # too simple
-[a person, [sitting, standing]]                                     # adds pose
-[a person, [sitting, standing], [a desk, a chair, a laptop]]        # adds context
+```text
+IOU = 0.20
+IOU = 0.70
+IOU = 0.90
 ```
 
-For each iteration, record your tree prompt string and take a screenshot of the browser output. You will need at least **3 iterations** showing your refinement process.
+Try to create a scene containing partially overlapping objects or people. Include **one comparison figure or three screenshots**.
 
-| Iteration | Tree Prompt String | What was detected | What was missed |
+Briefly explain:
+
+- what changed as IoU changed, and
+- why changing IoU changes suppression of overlapping detections but does **not** teach YOLO a new object category.
+
+---
+
+## Part 2 — NanoOWL / OWL-ViT Experiments
+
+This section should show that NanoOWL is not simply “another detector.” It uses **text prompts to specify the visual concept being searched for**, and its tree interface can express more detailed semantic structure. NanoOWL combines OWL-ViT and CLIP for nested detection/classification through text prompts.
+
+### 1. Baseline + Prompt Specificity
+
+Choose one object/person in the scene and record the baseline result. Then run a **four-level specificity ladder** similar to:
+
+```text
+(an object)
+(a person)
+(a face)
+(a face with glasses)
+```
+
+Use prompts appropriate for your actual scene.
+
+| Prompt | Detection Score | Box / Region Selected | Correct for the Requested Concept? |
+|---|---:|---|---|
+| General | | | |
+| More specific | | | |
+| Specific | | | |
+| Most specific | | | |
+
+Include **one representative screenshot** and answer:
+
+> As the prompt became more specific, did the score or selected region change? What does this suggest about the relationship between the text description and the image representation?
+
+Answer in **3–4 sentences**.
+
+### 2. Wrong-Prompt / Uncertainty Experiment
+
+Keep the same scene and test **two prompts describing objects that are not present**.
+
+| Wrong Prompt | Returned a Box? | Score | Where Did the Model Focus? |
+|---|---|---:|---|
+| 1 | | | |
+| 2 | | | |
+
+In **2–3 sentences**, explain what this reveals about interpreting model confidence. A text prompt is a request to search for a concept; it is not proof that the concept exists in the scene.
+
+### 3. Tree-Prompt Refinement
+
+Create a hierarchical prompt and refine it through **three iterations**.
+
+| Iteration | Tree Prompt | What Was Detected | What Was Missed |
 |---|---|---|---|
 | 1 | | | |
 | 2 | | | |
 | 3 | | | |
 
-**Deliverable:** Your final tree prompt string + a screenshot of the browser output + a short paragraph explaining why you structured the tree the way you did and what you would change if you had more time.
+Include a screenshot of the final tree result. In **3–4 sentences**, explain why a nested tree description provides a different kind of interaction from giving YOLO a fixed class label.
+
+### 4. Small Robustness / Failure Experiment
+
+Choose **two** conditions from the guided experiment:
+
+- occlusion,
+- lighting change,
+- increased distance,
+- rotation.
+
+Keep the NanoOWL prompt fixed.
+
+| Condition | Baseline Score | Changed Score | Detection / Box Change |
+|---|---:|---:|---|
+| Test 1 | | | |
+| Test 2 | | | |
+
+For each test, give **one sentence** describing why you think the model's behavior changed.
 
 ---
 
-#### Activity B: Failure Mode Documentation
+## Part 3 — Transition Experiment: Why Move from YOLO to a ViT-Based Open-Vocabulary Model?
 
-Now deliberately try to break the model using `attention_heatmap.py`. For each test, update the prompt to `"a human face"`, run the script, export the image, and record your observations.
+This is the most important comparison in the report. Use the **same physical scene** for YOLO and NanoOWL.
 
-| Test | Condition | Detection Score | Box Location | Hypothesis for why it failed |
-|---|---|---|---|---|
-| Occlusion | Cover half your face with your hand | | | |
-| Lighting | Point phone flashlight directly at camera | | | |
-| Lighting | Dim the room lights as much as possible | | | |
-| Distance | Sit as close as possible to the camera | | | |
-| Distance | Sit at medium distance (~1m) | | | |
-| Distance | Sit far from the camera (~3m) | | | |
-| Multi-person | Two students in frame | | | |
-| Rotation | Tilt head 45 degrees | | | |
-| Rotation | Tilt head 90 degrees | | | |
+### Step 1 — Run YOLO
 
-**Question 1:** At what distance did the score drop below 0.5? Did the heatmap change before the score dropped?
+Use:
 
-**Question 2:** Which failure surprised you the most and why?
+```text
+TASK = "detect"
+CONF = 0.25
+IOU = 0.70
+```
 
-**Question 3:** For any two tests above, predict how a CNN-based detector like YOLOv8 would behave differently under the same condition, based on what you know about how CNNs build their representations compared to ViT.
+Record the labels produced by YOLO.
 
+### Step 2 — Ask for a Concept YOLO Does Not Directly Provide
 
----
+Choose **one visible object, subtype, attribute, or description** that YOLO does not return with the label you want. Examples could include a more specific object type, an attribute, or another visual concept present in the scene.
 
-## Lab Report Deliverables
+Do **not** retrain YOLO. Ask yourself:
 
-Your lab report must be submitted as a single PDF by **March 6, 2026**. It should contain the following sections in order:
+- Can changing `CONF` or `IOU` make YOLO learn this new semantic category?
+- Can you simply type the new category name into the pretrained YOLO script and make it search for that concept?
 
----
+### Step 3 — Query the Same Concept with NanoOWL
 
-### Section 1 — Baseline & Object Detection (Part 1)
+Keep approximately the same scene and use a text prompt for the concept you selected. For example:
 
-**Table 1:** Results for 5 objects including your face and 4 objects from your surroundings.
+```text
+(a blue notebook)
+```
 
-| # | Prompt | Detection Score | Box Location | Heatmap Concentration |
-|---|---|---|---|---|
-| 1 | a human face | | | |
-| 2 | | | | |
-| 3 | | | | |
-| 4 | | | | |
-| 5 | | | | |
+```text
+(a power adapter)
+```
 
-**Images:** Include the exported `attention_output.png` for each of the 5 entries. Label each image clearly with the prompt used.
+```text
+(a person wearing glasses)
+```
 
----
+Use a concept that is actually visible in your own scene.
 
-### Section 2 — Prompt Engineering Experiments (Part 2)
+Include **one YOLO screenshot and one NanoOWL screenshot**.
 
-**Table 2:** Results for all 5 objects across all 3 experiments (Specificity Ladder, Wrong Prompts, Adversarial Prompts) — 11 rows per object, 55 rows total.
+Complete this table:
 
-| # | Object | Experiment | Prompt | Detection Score | Box Location | Heatmap Concentration |
-|---|---|---|---|---|---|---|
-| 1 | face | Specificity | "an object" | | | |
-| 2 | face | Specificity | "a person" | | | |
-| 3 | face | Specificity | "a face" | | | |
-| 4 | face | Specificity | "a human face with glasses" | | | |
-| 5 | face | Specificity | "a male face with glasses and a beard" | | | |
-| 6 | face | Wrong | "a dog" | | | |
-| 7 | face | Wrong | "a car" | | | |
-| 8 | face | Wrong | "a chair" | | | |
-| 9 | face | Adversarial | "a face but not wearing glasses" | | | |
-| 10 | face | Adversarial | "a happy face" | | | |
-| 11 | face | Adversarial | "a sad face" | | | |
-| ... | object 2 | ... | ... | | | |
+| Comparison | YOLO | NanoOWL / OWL-ViT |
+|---|---|---|
+| How is the requested visual concept specified? | | |
+| Can the requested concept be changed during this lab without retraining? | | |
+| What happened for your selected concept? | | |
+| What is one limitation you observed? | | |
 
-**Images:** Include at least one representative `attention_output.png` per experiment per object (minimum 15 images).
+### Required Interpretation
 
-**Written Answers:** Answer the following questions based on your Table 2 results:
+In **5–7 sentences**, explain the transition using your experiment. Your explanation must include all of the following ideas:
 
-1. As the prompt becomes more specific, does the detection score go up or down? Does the heatmap shift? *(2-3 sentences)*
-2. Does the model still return a bounding box when the prompt is completely wrong? What does this tell you about how the model handles uncertainty? *(2-3 sentences)*
-3. Does the score change between "a happy face" and "a sad face" on the same neutral expression? What does this reveal about how the text encoder interprets emotional attributes? *(2-3 sentences)*
+1. YOLO is effective for **task-specific detection over the classes represented by its trained detector**.
+2. `CONF` and `IOU` modify decision/suppression behavior; they do **not create a new semantic class**.
+3. NanoOWL/OWL-ViT allows the requested concept to be changed through **natural-language text prompts**.
+4. This provides **open-vocabulary flexibility**, especially when the required visual concepts are not conveniently fixed in advance.
+5. Open-vocabulary flexibility does **not** mean NanoOWL is automatically more accurate or more reliable; your wrong-prompt and robustness tests should make that clear.
 
----
+Your report should demonstrate the following conceptual progression:
 
-### Section 3 — Tree Prompt Design & Failure Mode Documentation (Part 3)
-
-**Table 3A — Tree Prompt Iterations:**
-
-| Iteration | Tree Prompt String | What was detected | What was missed |
-|---|---|---|---|
-| 1 | | | |
-| 2 | | | |
-| 3 | | | |
-
-**Deliverables for Activity A:**
-- Screenshot of your final tree prompt output in the browser
-- A short paragraph (5-7 sentences) explaining why you structured the tree the way you did and what you would change if you had more time
-
-**Table 3B — Failure Mode Results:**
-
-| Test | Condition | Detection Score | Box Location | Hypothesis for why it failed |
-|---|---|---|---|---|
-| Occlusion | Cover half your face with your hand | | | |
-| Lighting | Phone flashlight directly at camera | | | |
-| Lighting | Dim the room lights | | | |
-| Distance | As close as possible | | | |
-| Distance | ~1m away | | | |
-| Distance | ~3m away | | | |
-| Multi-person | Two students in frame | | | |
-| Rotation | 45 degrees | | | |
-| Rotation | 90 degrees | | | |
-
-**Images:** Include the exported `attention_output.png` for each failure mode test (9 images).
-
-**Written Answers:**
-
-1. At what distance did the score drop below 0.5? Did the heatmap change before the score dropped? *(2-3 sentences)*
-2. Which failure surprised you the most and why? *(2-3 sentences)*
-3. For any two failure tests, predict how YOLOv8 would behave differently under the same condition based on what you know about CNN vs ViT architectures. *(4-5 sentences)*
+```text
+YOLO
+Fast, task-specific detection using learned classes
+        ↓
+Need to request a new or more specific visual concept
+without collecting data and retraining a detector
+        ↓
+NanoOWL / OWL-ViT
+Text-conditioned, open-vocabulary visual search
+        ↓
+Greater semantic flexibility, but still subject to
+confidence errors and visual failure modes
+```
 
 ---
 
-## Lab Report Deadline : 6 March 2026
+## Part 4 — Short Conceptual Questions
+
+Answer each question in **2–4 sentences** using evidence from your experiments.
+
+1. What determines which object labels a pretrained YOLO detector can output?
+2. Why did changing `CONF` and `IOU` change YOLO behavior without expanding what concepts it understands?
+3. What role did the text prompt play in the NanoOWL experiments?
+4. What did the wrong-prompt experiment teach you about treating a model score as certainty?
+5. What did the tree prompt allow you to express that a single YOLO class label does not?
+6. Give one application where you would prefer a fixed YOLO detector and one where an open-vocabulary approach would be useful. Explain why.
+
+---
+
+## Submission Checklist
+
+Your report should contain:
+
+- Brief objective/introduction (**one short paragraph**)
+- YOLO four-task comparison
+- YOLO confidence experiment
+- YOLO IoU/NMS experiment
+- NanoOWL specificity experiment
+- NanoOWL wrong-prompt experiment
+- NanoOWL three-stage tree-prompt refinement
+- Two-condition NanoOWL robustness test
+- **YOLO → NanoOWL transition experiment** using the same scene
+- Short conceptual answers
+- Clearly labeled screenshots/tables
+- Brief conclusion (**one short paragraph**) stating what you learned about fixed-class detection versus text-conditioned open-vocabulary detection
+
+> **Do not submit a step-by-step copy of the lab manual.** The report should focus on experimental results, observations, comparisons, and interpretation.
+
+### Suggested Time Allocation
+
+The required experiments are intentionally limited so that the practical work can be completed in approximately **2 hours**:
+
+- YOLO four-task comparison: ~15 minutes
+- YOLO confidence + IoU experiments: ~20 minutes
+- NanoOWL baseline + specificity + wrong-prompt tests: ~20 minutes
+- NanoOWL tree + two robustness tests: ~20 minutes
+- YOLO → NanoOWL transition experiment: ~20 minutes
+- Organize screenshots/tables and answer conceptual questions: ~25 minutes
+
+---
