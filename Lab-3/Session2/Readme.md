@@ -1,7 +1,7 @@
 # OWL-ViT Lab on the DGX Spark: Getting Started
 
-You will upload your CVAT dataset to the DGX, prepare it, fine-tune OWL-ViT on the DGX's GPU,
-and download the trained model to your own computer.
+You will upload your CVAT dataset to the DGX, prepare it, fine-tune OWL-ViT on the DGX's GPU
+with three different settings, download the trained model, and plot the results for your lab report.
 
 ## Before you start
 
@@ -108,7 +108,7 @@ container you are "root", but only within your own files.
 ```bash
 nvidia-smi                                       # the GPU "NVIDIA GB10" is listed
 ls /workspace/data/MyDataset                     # your 5 class folders + the JSON
-ls /workspace/code                               # preprocess.py  train_owlvit.py
+ls /workspace/code                               # preprocess.py  train_owlvit.py  plot_results.py
 python -c "import torch; print('GPU ready:', torch.cuda.is_available())"   # GPU ready: True
 ```
 
@@ -178,9 +178,9 @@ You can run the script again at any time. It replaces the old `processed` folder
 
 ## 5. Train OWL-ViT
 
-### Choose the hyperparameters
+### The settings you can change
 
-All the settings you can experiment with are at the top of the training script.
+Open the training script.
 
 **Container:**
 
@@ -188,21 +188,20 @@ All the settings you can experiment with are at the top of the training script.
 nano /workspace/code/train_owlvit.py
 ```
 
-Edit the values in the `HYPERPARAMETERS` block. Press `Ctrl-O` then `Enter` to save, and `Ctrl-X` to quit.
+At the top is the `HYPERPARAMETERS` block. **Change only the settings in this block.** Everything
+below it is fixed for this lab, so leave it as it is. In nano, press `Ctrl-O` then `Enter` to save,
+and `Ctrl-X` to quit.
 
-| Setting | Default | What to try |
+| Setting | Default | What it does |
 | --- | --- | --- |
-| `EPOCHS` | 20 | more if accuracy is still rising at the end |
-| `LEARNING_RATE` | 1e-4 | 3e-5 to 3e-4 |
-| `BATCH_SIZE` | 8 | lower it if you get "out of memory" |
-| `TRAIN_VISION_BACKBONE` | False | True also trains the image encoder: slower, sometimes better |
-| `HORIZONTAL_FLIP_PROB`, `COLOR_JITTER` | 0.5, 0.2 | data augmentation; 0 turns it off |
-| `PROMPT_TEMPLATE` | `"a photo of a {}"` | e.g. `"{}"` or `"a {} on a table"` |
-| `MODEL_NAME` | owlvit-base-patch32 | `"google/owlvit-base-patch16"`: slower, often more accurate |
-| `RUN_NAME` | automatic | name the experiment, e.g. `"lr3e-4"` |
-
-Change **one thing at a time** and compare the test results. Every run is saved in its own folder,
-so nothing is overwritten.
+| `RUN_NAME` | `""` (automatic) | Name of the results folder, e.g. `"combo1_baseline"` |
+| `MODEL_NAME` | `"google/owlvit-base-patch32"` | `"google/owlvit-base-patch16"` is slower and often more accurate |
+| `PROMPT_TEMPLATE` | `"a photo of a {}"` | Text given to the model for each class; `{}` becomes the class name |
+| `EPOCHS` | 20 | Passes over the training images |
+| `BATCH_SIZE` | 8 | Images per update; lower it if you get "out of memory" |
+| `LEARNING_RATE` | 1e-4 | Step size of each update |
+| `TRAIN_VISION_BACKBONE` | False | True also trains the image encoder: slower, more GPU memory |
+| `HORIZONTAL_FLIP_PROB`, `COLOR_JITTER` | 0.5, 0.2 | Data augmentation; 0 turns it off |
 
 ### Run training
 
@@ -216,7 +215,7 @@ The script first measures the original OWL-ViT on your validation images, then p
 
 ```
 epoch train loss  val loss val mAP50  mAP50-95        lr   time
-    1     0.4671    0.2702     0.995     0.877  1.00e-04    11s  <- best, saved
+    1     0.4671    0.2702     0.995     0.877  1.00e-04    12s  <- best, saved
 ```
 
 - **Loss:** should go down.
@@ -224,28 +223,61 @@ epoch train loss  val loss val mAP50  mAP50-95        lr   time
   mAP50 counts a box as correct if it overlaps the true box by at least 50%. mAP50-95 averages
   stricter overlaps too.
 - **`<- best, saved`:** the model from this epoch is the best so far, and it's the one kept.
-- **Stopping:** training stops early if accuracy stops improving. Press `Ctrl-C` to stop it yourself;
-  the best model so far is still tested and kept.
+- **Stopping:** training stops early after 8 epochs without improvement. Press `Ctrl-C` to stop it
+  yourself; the best model so far is still tested and kept.
 
-An epoch takes about 10 seconds when the GPU is free, and longer while other groups are training.
 At the end, the best model is tested once on the **test** images it has never seen. The script prints
 the accuracy per class next to the original OWL-ViT's.
 
-Each run is saved in `~/weights/run1`, `~/weights/run2`, and so on:
+Each run is saved in `~/weights/<RUN_NAME>/`:
 
 ```
-run1/
+combo1_baseline/
   best/                  the trained model: config, weights, prompts.json, categories.json
+  metrics/               everything recorded during training (for the lab report)
   test_predictions/      test images: green = your boxes, red = the model's boxes
-  training_curves.png    loss and accuracy per epoch
-  history.csv            the numbers behind the plot
-  test_metrics.json      final test accuracy, per class
-  hyperparameters.json   the settings used for this run
+  training_curves.png    a quick look at loss and accuracy per epoch
 ```
+
+An existing run is never overwritten. If you reuse a `RUN_NAME`, the new run gets `_2` added to its name.
 
 ---
 
-## 6. Download the trained model to your computer
+## 6. The three experiments (required)
+
+Train **three times**, once for each combination below. Each combination changes **one** setting
+compared with the baseline, so you can see the effect of that one change. Keep every other setting
+at its default.
+
+| Setting | Combination 1: baseline | Combination 2: smaller learning rate | Combination 3: train the image encoder |
+| --- | --- | --- | --- |
+| `RUN_NAME` | `"combo1_baseline"` | `"combo2_low_lr"` | `"combo3_finetune_encoder"` |
+| `LEARNING_RATE` | `1e-4` | **`1e-5`** | `1e-4` |
+| `TRAIN_VISION_BACKBONE` | `False` | `False` | **`True`** |
+| All other settings | default | default | default |
+
+Use exactly these `RUN_NAME`s; the lab report commands below expect them.
+
+For each combination:
+
+1. **Container:** run `nano /workspace/code/train_owlvit.py` and set the values from the table.
+   For combination 3, set `LEARNING_RATE` back to `1e-4`.
+2. Save and quit, then run `python /workspace/code/train_owlvit.py`.
+3. Wait for `Done.` before starting the next combination.
+
+| Combination | What it tests | What to look for |
+| --- | --- | --- |
+| 1: baseline | Only the detection heads learn (about 1.6 million parameters). The image and text encoders stay frozen. | The reference point for the other two. Compare with the original OWL-ViT. |
+| 2: smaller learning rate | The same model with 10× smaller update steps. | How fast the losses fall, and the validation mAP after 20 epochs, compared with combination 1. |
+| 3: train the image encoder | The image encoder (about 88 million parameters) learns as well as the heads. | Accuracy, the gap between training and validation loss (overfitting), time per epoch, and GPU memory. |
+
+On a free GPU, combinations 1 and 2 take about 4 minutes each and combination 3
+about 8 minutes. They take longer when other groups are training, so run them inside
+`tmux` (step 3).
+
+---
+
+## 7. Download the trained model to your computer
 
 **DGX:** list your runs:
 
@@ -253,18 +285,13 @@ run1/
 ls ~/weights
 ```
 
-**Laptop:** download the model of the run you want, here `run1`:
+**Laptop:** download the model of the run you want, for example `combo1_baseline`:
 
 ```bash
-scp -r groupXX@DGX-IP:~/weights/run1/best ./owlvit_run1
+scp -r groupXX@DGX-IP:~/weights/combo1_baseline/best ./owlvit_combo1
 ```
 
-Also download the plots and prediction images:
-
-```bash
-scp -r groupXX@DGX-IP:~/weights/run1/test_predictions ./run1_test_predictions
-scp groupXX@DGX-IP:~/weights/run1/training_curves.png .
-```
+The model folder is about 600 MB.
 
 ### Use the model on your computer
 
@@ -274,7 +301,7 @@ scp groupXX@DGX-IP:~/weights/run1/training_curves.png .
 pip install torch transformers==4.46.3 pillow
 ```
 
-Save this as `detect.py` next to the `owlvit_run1` folder, then run `python detect.py my_photo.jpg`:
+Save this as `detect.py` next to the `owlvit_combo1` folder, then run `python detect.py my_photo.jpg`:
 
 ```python
 import json, sys
@@ -282,7 +309,7 @@ import torch
 from PIL import Image, ImageOps
 from transformers import OwlViTForObjectDetection, OwlViTProcessor
 
-MODEL_DIR = "owlvit_run1"
+MODEL_DIR = "owlvit_combo1"
 THRESHOLD = 0.3                       # minimum score to show a box
 
 processor = OwlViTProcessor.from_pretrained(MODEL_DIR)
@@ -317,3 +344,312 @@ Always give the model the prompts from `prompts.json`. They are the same text it
 | Training is slow | Other groups are training too. Run it in tmux, detach, and come back later. |
 | You broke a script | **DGX**, outside the container: `cp /home/share/owlvit_lab/*.py ~/code/` restores fresh copies. |
 | You lost your SSH connection | Log in again and run `tmux attach -t owl`. |
+| A run name got `_2` added | You reused a `RUN_NAME`. Use the new folder name in the download commands, or delete the old run first: `rm -r ~/weights/combo1_baseline` (on the DGX). |
+
+---
+
+## Lab report
+
+### What each run records
+
+Every run saves its training record in `~/weights/<RUN_NAME>/metrics/`. These files are small, so
+they're quick to download.
+
+| File | What it contains |
+| --- | --- |
+| `epoch_history.csv` | One row per epoch. Training and validation loss: total, classification, L1 and GIoU. Validation mAP50, mAP50-95 and mAP75. Learning rate, time and GPU memory. Epoch 0 is the original OWL-ViT before training. |
+| `step_history.csv` | One row per training step: the loss and its three parts, and the learning rate. |
+| `val_per_class_history.csv` | Validation AP50 and AP50-95 for every class after every epoch. |
+| `test_per_class.csv` | Final test AP per class, for your fine-tuned model and for the original OWL-ViT. |
+| `test_pr_curve.csv` | Precision-recall curve on the test images for every class (IoU 0.5), for both models. |
+| `run_summary.json` | Your settings, the dataset size (images and boxes per class and split), trainable parameters, best epoch, training time, peak GPU memory, and the final test scores. |
+
+### Download the data to your computer
+
+When all three combinations have finished, run these on your **laptop**:
+
+```bash
+mkdir lab_report
+scp -r groupXX@DGX-IP:~/weights/combo1_baseline/metrics lab_report/combo1_baseline
+scp -r groupXX@DGX-IP:~/weights/combo2_low_lr/metrics lab_report/combo2_low_lr
+scp -r groupXX@DGX-IP:~/weights/combo3_finetune_encoder/metrics lab_report/combo3_finetune_encoder
+scp -r groupXX@DGX-IP:~/weights/combo1_baseline/test_predictions lab_report/predictions_combo1
+scp -r groupXX@DGX-IP:~/weights/combo2_low_lr/test_predictions lab_report/predictions_combo2
+scp -r groupXX@DGX-IP:~/weights/combo3_finetune_encoder/test_predictions lab_report/predictions_combo3
+scp -r groupXX@DGX-IP:~/data/processed/preview lab_report/dataset_preview
+scp groupXX@DGX-IP:~/code/plot_results.py .
+```
+
+You now have:
+
+```
+plot_results.py
+lab_report/
+  combo1_baseline/            metrics of combination 1 (the CSV and JSON files above)
+  combo2_low_lr/              metrics of combination 2
+  combo3_finetune_encoder/    metrics of combination 3
+  predictions_combo1/ ...     test images with boxes, for each combination
+  dataset_preview/            your images with the CVAT boxes
+```
+
+If you run the commands a second time, delete `lab_report` first. Otherwise `scp` puts the new copy
+inside the old folder.
+
+### Make the plots
+
+**Laptop:**
+
+```bash
+pip install pandas matplotlib
+python plot_results.py lab_report
+```
+
+This saves the figures and a results table in `lab_report/figures/`:
+
+| File | Shows |
+| --- | --- |
+| `fig0_dataset_boxes.png` | Labeled boxes per class in train, val and test |
+| `fig1_loss_per_epoch.png` | Training and validation loss per epoch, for all three combinations |
+| `fig2_val_map_per_epoch.png` | Validation mAP50 and mAP50-95 per epoch (epoch 0 = original OWL-ViT) |
+| `fig3_loss_per_step.png` | Training loss at every step, with a moving average |
+| `fig4_loss_components.png` | Classification, L1 and GIoU loss per epoch |
+| `fig5_learning_rate.png` | The learning rate schedule: warm-up, then cosine decay |
+| `fig6_test_map.png` | Test mAP of each combination and of the original OWL-ViT |
+| `fig7_test_ap_per_class.png` | Test AP50-95 per class |
+| `fig8_pr_curves.png` | Test precision-recall curves per class |
+| `fig9_val_ap_per_class.png` | Validation AP50-95 per class during training |
+| `results_table.csv` | Settings, parameters, time, GPU memory and test mAP of each combination |
+
+The script `plot_results.py` (also in `~/code` on the DGX):
+
+```python
+"""Make the lab-report figures from your OWL-ViT training runs.
+
+Run on YOUR computer (not the DGX):
+    pip install pandas matplotlib
+    python plot_results.py lab_report
+
+lab_report/ must contain one folder per run, each holding that run's metrics files
+(epoch_history.csv, step_history.csv, val_per_class_history.csv, test_per_class.csv,
+test_pr_curve.csv, run_summary.json). The figures and a results table are saved in
+lab_report/figures/.
+"""
+import json
+import sys
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import pandas as pd
+
+root = Path(sys.argv[1] if len(sys.argv) > 1 else "lab_report")
+out = root / "figures"
+out.mkdir(parents=True, exist_ok=True)
+
+# ---------- load every run ----------
+runs = {}
+for folder in sorted(p for p in root.iterdir() if (p / "epoch_history.csv").is_file()):
+    run = {"epochs": pd.read_csv(folder / "epoch_history.csv"),
+           "summary": json.loads((folder / "run_summary.json").read_text())}
+    for name, file in (("steps", "step_history.csv"), ("val_class", "val_per_class_history.csv"),
+                       ("test", "test_per_class.csv"), ("pr", "test_pr_curve.csv")):
+        run[name] = pd.read_csv(folder / file) if (folder / file).is_file() else None
+    runs[folder.name] = run
+if not runs:
+    sys.exit(f"No runs found in {root}. Each run folder needs epoch_history.csv (see the guide).")
+print("Runs:", ", ".join(runs))
+colors = dict(zip(runs, plt.rcParams["axes.prop_cycle"].by_key()["color"]))
+
+
+def save(figure, name):
+    figure.tight_layout()
+    figure.savefig(out / name, dpi=150)
+    plt.close(figure)
+    print("saved", out / name)
+
+
+# ---------- Fig 0: your dataset (boxes per class in each split) ----------
+counts = next(iter(runs.values()))["summary"].get("boxes_per_class")
+if counts:
+    ax = pd.DataFrame(counts).plot.bar(figsize=(8, 4.5), rot=0, title="Labeled boxes per class and split")
+    ax.set_ylabel("number of boxes")
+    ax.legend(bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
+    for container in ax.containers:
+        ax.bar_label(container, fontsize=7)
+    save(ax.figure, "fig0_dataset_boxes.png")
+
+
+# ---------- Fig 1: train and validation loss per epoch ----------
+figure, ax = plt.subplots(figsize=(7, 4.5))
+for name, run in runs.items():
+    e = run["epochs"][run["epochs"].epoch > 0]
+    ax.plot(e.epoch, e.train_loss, color=colors[name], label=f"{name} train")
+    ax.plot(e.epoch, e.val_loss, color=colors[name], linestyle="--", label=f"{name} val")
+ax.set(xlabel="epoch", ylabel="loss", title="Training (solid) and validation (dashed) loss")
+ax.legend(fontsize=8)
+save(figure, "fig1_loss_per_epoch.png")
+
+# ---------- Fig 2: validation mAP per epoch (epoch 0 = original OWL-ViT) ----------
+figure, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharey=True)
+for ax, metric in zip(axes, ("val_mAP50", "val_mAP50-95")):
+    for name, run in runs.items():
+        e = run["epochs"]
+        ax.plot(e.epoch, e[metric], marker="o", markersize=3, color=colors[name], label=name)
+    ax.set(xlabel="epoch (0 = before training)", title=metric.replace("val_", "Validation "), ylim=(0, 1))
+    ax.grid(alpha=0.3)
+axes[0].set_ylabel("mAP")
+axes[0].legend(fontsize=8)
+save(figure, "fig2_val_map_per_epoch.png")
+
+# ---------- Fig 3: training loss at every step ----------
+figure, ax = plt.subplots(figsize=(7, 4.5))
+for name, run in runs.items():
+    s = run["steps"]
+    if s is None:
+        continue
+    ax.plot(s.global_step, s.loss, color=colors[name], alpha=0.2)
+    ax.plot(s.global_step, s.loss.rolling(20, min_periods=1).mean(), color=colors[name], label=f"{name} (moving avg.)")
+ax.set(xlabel="training step", ylabel="loss", title="Training loss per step")
+ax.legend(fontsize=8)
+save(figure, "fig3_loss_per_step.png")
+
+# ---------- Fig 4: the three parts of the loss ----------
+figure, axes = plt.subplots(1, 3, figsize=(14, 4))
+for ax, part, title in zip(axes, ("class", "l1", "giou"), ("Classification (focal)", "Box L1", "Box GIoU")):
+    for name, run in runs.items():
+        e = run["epochs"][run["epochs"].epoch > 0]
+        ax.plot(e.epoch, e[f"train_{part}_loss"], color=colors[name], label=f"{name} train")
+        ax.plot(e.epoch, e[f"val_{part}_loss"], color=colors[name], linestyle="--", label=f"{name} val")
+    ax.set(xlabel="epoch", title=title)
+axes[0].legend(fontsize=7)
+save(figure, "fig4_loss_components.png")
+
+# ---------- Fig 5: learning rate schedule ----------
+figure, ax = plt.subplots(figsize=(7, 4))
+for name, run in runs.items():
+    if run["steps"] is not None:
+        ax.plot(run["steps"].global_step, run["steps"].learning_rate, color=colors[name], label=name)
+ax.set(xlabel="training step", ylabel="learning rate", title="Learning rate schedule (warm-up + cosine)")
+ax.legend(fontsize=8)
+save(figure, "fig5_learning_rate.png")
+
+# ---------- Fig 6: test mAP per run vs the original model ----------
+rows = []
+for name, run in runs.items():
+    t = run["summary"].get("test")
+    if t:
+        rows.append({"model": name, "mAP50": t["mAP50"], "mAP50-95": t["mAP50-95"]})
+first = next(iter(runs.values()))["summary"].get("original_model_test")
+if first:
+    rows.insert(0, {"model": "original OWL-ViT", "mAP50": first["mAP50"], "mAP50-95": first["mAP50-95"]})
+if rows:
+    table = pd.DataFrame(rows).set_index("model")
+    ax = table.plot.bar(figsize=(9, 4.5), rot=15, ylim=(0, 1.05), title="Test mAP (untouched test images)")
+    ax.legend(bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
+    for container in ax.containers:
+        ax.bar_label(container, fmt="%.2f", fontsize=7)
+    save(ax.figure, "fig6_test_map.png")
+
+# ---------- Fig 7: test AP per class ----------
+per_class = []
+for name, run in runs.items():
+    t = run["test"]
+    if t is None:
+        continue
+    for _, r in t[t["class"] != "ALL"].iterrows():
+        label = name if r["model"] == "fine-tuned" else "original OWL-ViT"
+        per_class.append({"class": r["class"], "model": label, "AP50-95": r["AP50-95"]})
+if per_class:
+    pivot = (pd.DataFrame(per_class).drop_duplicates(["class", "model"])
+             .pivot(index="class", columns="model", values="AP50-95"))
+    pivot = pivot[["original OWL-ViT"] + [c for c in pivot.columns if c != "original OWL-ViT"]]
+    ax = pivot.plot.bar(figsize=(12, 4.5), rot=0, ylim=(0, 1), title="Test AP50-95 per class")
+    ax.set_ylabel("AP50-95")
+    ax.legend(bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
+    save(ax.figure, "fig7_test_ap_per_class.png")
+
+# ---------- Fig 8: precision-recall curves on the test images (IoU 0.5) ----------
+with_pr = {n: r for n, r in runs.items() if r["pr"] is not None}
+if with_pr:
+    figure, axes = plt.subplots(1, len(with_pr), figsize=(5 * len(with_pr), 4.5), squeeze=False)
+    for ax, (name, run) in zip(axes[0], with_pr.items()):
+        pr = run["pr"][run["pr"]["model"] == "fine-tuned"]
+        for cls, curve in pr.groupby("class"):
+            ax.plot(curve.recall, curve.precision, label=cls)
+        ax.set(xlabel="recall", ylabel="precision", xlim=(0, 1), ylim=(0, 1.02), title=f"{name}\nPR curves, IoU 0.5")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=7, loc="lower left")
+    save(figure, "fig8_pr_curves.png")
+
+# ---------- Fig 9: validation AP per class during training ----------
+with_class = {n: r for n, r in runs.items() if r["val_class"] is not None}
+if with_class:
+    figure, axes = plt.subplots(1, len(with_class), figsize=(5 * len(with_class), 4.5), squeeze=False, sharey=True)
+    for ax, (name, run) in zip(axes[0], with_class.items()):
+        for cls, curve in run["val_class"].groupby("class"):
+            ax.plot(curve.epoch, curve["AP50-95"], label=cls)
+        ax.set(xlabel="epoch", title=f"{name}\nValidation AP50-95 per class", ylim=(0, 1))
+        ax.grid(alpha=0.3)
+    axes[0][0].legend(fontsize=7)
+    save(figure, "fig9_val_ap_per_class.png")
+
+# ---------- Results table ----------
+table = []
+for name, run in runs.items():
+    s, h = run["summary"], run["summary"]["hyperparameters"]
+    table.append({"run": name, "model": h["MODEL_NAME"].split("/")[-1], "learning_rate": h["LEARNING_RATE"],
+                  "batch_size": h["BATCH_SIZE"], "train_vision_backbone": h["TRAIN_VISION_BACKBONE"],
+                  "flip": h["HORIZONTAL_FLIP_PROB"], "color_jitter": h["COLOR_JITTER"],
+                  "trainable_params": s["trainable_parameters"], "epochs_run": s.get("epochs_completed"),
+                  "best_epoch": s.get("best_epoch"),
+                  "train_minutes": round(s.get("training_seconds", float("nan")) / 60, 1),
+                  "peak_gpu_gb": s.get("peak_gpu_memory_gb"),
+                  "test_mAP50": round(s.get("test", {}).get("mAP50", float("nan")), 3),
+                  "test_mAP50-95": round(s.get("test", {}).get("mAP50-95", float("nan")), 3)})
+table = pd.DataFrame(table)
+table.to_csv(out / "results_table.csv", index=False)
+print("\n" + table.to_string(index=False))
+print(f"\nsaved {out / 'results_table.csv'}")
+```
+
+### What to put in your lab report
+
+1. **Title:** group number, members, and which DGX you used.
+2. **Introduction:** what OWL-ViT is (an open-vocabulary detector that finds objects described by
+   text), and the goal of this lab.
+3. **Dataset**
+   - **Classes and photos:** your 5 classes, and how you took the photos (camera, backgrounds,
+     lighting, distances).
+   - **Annotation:** how you labeled the photos in CVAT, and how many boxes there are per class (`fig0`).
+   - **Preprocessing:** conversion to PNG, resizing to 768 × 768 with box rescaling, and the
+     70 / 15 / 15 split. Give the images and boxes per split.
+   - **Examples:** 2–3 images from `dataset_preview` showing your boxes.
+4. **Method**
+   - **The model:** OWL-ViT in a few sentences, covering the image encoder, the text encoder and
+     prompts, and the class and box heads.
+   - **What was trained:** what each combination trains, and how many trainable parameters it has
+     (`results_table.csv`).
+   - **The loss:** Hungarian matching, then focal classification loss plus L1 and GIoU box losses.
+     One sentence each.
+   - **Settings:** a table of the three combinations.
+5. **Results**
+   - **Results table:** the original OWL-ViT and the three combinations. Include test mAP50,
+     mAP50-95, best epoch, training time and peak GPU memory (`results_table.csv`, `fig6`).
+   - **Figures:** `fig1` (loss), `fig2` (validation mAP), `fig7` (AP per class) and `fig8`
+     (precision-recall), each with a caption.
+   - **Example detections:** 3–4 images from the `predictions_*` folders, including at least one
+     correct detection and one mistake.
+6. **Discussion.** Answer these questions:
+   - **Fine-tuning:** how much did fine-tuning improve on the original OWL-ViT? Which classes
+     improved most and least, and why?
+   - **Combination 2 vs 1:** what did the 10× smaller learning rate change? Look at how fast the
+     loss fell and the final accuracy (`fig1`, `fig2`, `fig5`).
+   - **Combination 3 vs 1:** what did training the image encoder change? Consider accuracy, the
+     training/validation loss gap (overfitting?), time and memory.
+   - **Deployment:** which combination would you deploy, and why?
+   - **Mistakes:** what kinds of mistakes does the model make (missed objects, wrong class, loose
+     boxes), and what might cause them?
+   - **Next steps:** what would you try next to improve the model?
+7. **Conclusion:** 3–5 sentences.
+8. **Appendix:** the `run_summary.json` settings of each run, and any extra runs you tried.
