@@ -1,7 +1,14 @@
-# OWL-ViT Lab on the DGX Spark: Getting Started
+# OWL-ViT Lab: Train on the DGX Spark, Run on the Jetson Orin Nano
 
-You will upload your CVAT dataset to the DGX, prepare it, fine-tune OWL-ViT on the DGX's GPU
-with three different settings, download the trained model, and plot the results for your lab report.
+This lab has two parts:
+
+- **Part 1, training (steps 1–7):** upload your CVAT dataset to the DGX, prepare it, and fine-tune
+  OWL-ViT on the DGX's GPU with three different settings.
+- **Part 2, inference (steps 8–13):** export your best model, copy it to a Jetson Orin Nano, and
+  run it live on a camera, with a web page where you type what to detect.
+
+The **lab report** section at the end explains how to download your training data, make the
+plots and write the report.
 
 ## Before you start
 
@@ -14,6 +21,8 @@ You need:
 | The DGX address | shown in class (written as `DGX-IP` below) |
 | Your photo folder, with one sub-folder per class | `MyDataset/` with 5 sub-folders of 125 photos each |
 | The COCO JSON exported from CVAT | `instances_default.json` |
+| **For Part 2:** the Jetson address and login | given in class (written as `JETSON-IP` and `JETSON-USER`) |
+| **For Part 2:** a USB webcam plugged into the Jetson | optional: you can also test with photos |
 
 To get the JSON from CVAT, export your task or project with the format **COCO 1.0**. Unzip the
 download. The JSON is `annotations/instances_default.json`.
@@ -28,11 +37,27 @@ Each command block says where to run it:
 
 - **Laptop** means a terminal on your own computer: Terminal on macOS/Linux, PowerShell on Windows.
 - **DGX** means your SSH session on the DGX.
-- **Container** means inside the training container, after step 3.
+- **Container** means inside the DGX training container, after step 3.
+- **Jetson** means an SSH session on the Jetson (`ssh JETSON-USER@JETSON-IP`) or a terminal on its desktop.
+- **Jetson container** means inside the Jetson container, after step 11.
+
+All the scripts are already in your `~/code` folder on the DGX. You only edit one block of
+settings in `train_owlvit.py`.
+
+| Script in `~/code` | Runs on | What it does |
+| --- | --- | --- |
+| `preprocess.py` | DGX container | Prepares your dataset (step 4) |
+| `train_owlvit.py` | DGX container | Fine-tunes OWL-ViT (steps 5 and 6) |
+| `detect.py` | your laptop | Runs your model on a photo (step 7) |
+| `export_jetson.py` | DGX container | Packs your model for the Jetson (step 8) |
+| `jetson/` | Jetson container | The live web page and a one-photo test (steps 12 and 13) |
+| `plot_results.py` | your laptop | Makes the lab report figures |
 
 > Tip: avoid spaces in folder and file names. If a name has spaces, put the whole path in quotes.
 
 ---
+
+# Part 1: Training on the DGX
 
 ## 1. Log in to the DGX
 
@@ -108,7 +133,7 @@ container you are "root", but only within your own files.
 ```bash
 nvidia-smi                                       # the GPU "NVIDIA GB10" is listed
 ls /workspace/data/MyDataset                     # your 5 class folders + the JSON
-ls /workspace/code                               # preprocess.py  train_owlvit.py  plot_results.py
+ls /workspace/code                               # detect.py  export_jetson.py  jetson  plot_results.py  preprocess.py  train_owlvit.py
 python -c "import torch; print('GPU ready:', torch.cuda.is_available())"   # GPU ready: True
 ```
 
@@ -171,8 +196,7 @@ scp -r groupXX@DGX-IP:~/data/processed/preview ./preview
 Open the images. Each box should sit tightly around its object. If the boxes are shifted or
 rotated, tell the instructor before you train.
 
-You can run the script again at any time. It replaces the old `processed` folder. Its settings
-(image size, split fractions) are at the top of `preprocess.py`; normally you don't need to change them.
+You can run the script again at any time. It replaces the old `processed` folder.
 
 ---
 
@@ -246,30 +270,83 @@ An existing run is never overwritten. If you reuse a `RUN_NAME`, the new run get
 ## 6. The three experiments (required)
 
 Train **three times**, once for each combination below. Each combination changes **one** setting
-compared with the baseline, so you can see the effect of that one change. Keep every other setting
-at its default.
-
-| Setting | Combination 1: baseline | Combination 2: smaller learning rate | Combination 3: train the image encoder |
-| --- | --- | --- | --- |
-| `RUN_NAME` | `"combo1_baseline"` | `"combo2_low_lr"` | `"combo3_finetune_encoder"` |
-| `LEARNING_RATE` | `1e-4` | **`1e-5`** | `1e-4` |
-| `TRAIN_VISION_BACKBONE` | `False` | `False` | **`True`** |
-| All other settings | default | default | default |
-
-Use exactly these `RUN_NAME`s; the lab report commands below expect them.
+compared with the baseline (marked `# <- changed`), so you can see the effect of that one change.
 
 For each combination:
 
-1. **Container:** run `nano /workspace/code/train_owlvit.py` and set the values from the table.
-   For combination 3, set `LEARNING_RATE` back to `1e-4`.
-2. Save and quit, then run `python /workspace/code/train_owlvit.py`.
-3. Wait for `Done.` before starting the next combination.
+1. **Container:** run `nano /workspace/code/train_owlvit.py`.
+2. Make the `HYPERPARAMETERS` block look exactly like the block for that combination.
+3. Save and quit, then run `python /workspace/code/train_owlvit.py`.
+4. Wait for `Done.` before starting the next combination.
 
-| Combination | What it tests | What to look for |
-| --- | --- | --- |
-| 1: baseline | Only the detection heads learn (about 1.6 million parameters). The image and text encoders stay frozen. | The reference point for the other two. Compare with the original OWL-ViT. |
-| 2: smaller learning rate | The same model with 10× smaller update steps. | How fast the losses fall, and the validation mAP after 20 epochs, compared with combination 1. |
-| 3: train the image encoder | The image encoder (about 88 million parameters) learns as well as the heads. | Accuracy, the gap between training and validation loss (overfitting), time per epoch, and GPU memory. |
+Use exactly these `RUN_NAME`s; the lab report commands expect them.
+
+### Combination 1: baseline
+
+Only the detection heads learn (about 1.6 million parameters). The image and text encoders stay
+frozen. This is the reference point for the other two.
+
+```python
+RUN_NAME = "combo1_baseline"                # <- changed
+MODEL_NAME = "google/owlvit-base-patch32"
+PROMPT_TEMPLATE = "a photo of a {}"
+
+EPOCHS = 20
+BATCH_SIZE = 8
+LEARNING_RATE = 1e-4
+
+TRAIN_VISION_BACKBONE = False
+
+HORIZONTAL_FLIP_PROB = 0.5
+COLOR_JITTER = 0.2
+```
+
+### Combination 2: smaller learning rate
+
+The same model as combination 1, with 10× smaller update steps.
+
+```python
+RUN_NAME = "combo2_low_lr"                  # <- changed
+MODEL_NAME = "google/owlvit-base-patch32"
+PROMPT_TEMPLATE = "a photo of a {}"
+
+EPOCHS = 20
+BATCH_SIZE = 8
+LEARNING_RATE = 1e-5                        # <- changed
+
+TRAIN_VISION_BACKBONE = False
+
+HORIZONTAL_FLIP_PROB = 0.5
+COLOR_JITTER = 0.2
+```
+
+### Combination 3: train the image encoder
+
+The image encoder (about 88 million parameters) learns as well as the heads. Set the learning
+rate **back to `1e-4`**.
+
+```python
+RUN_NAME = "combo3_finetune_encoder"        # <- changed
+MODEL_NAME = "google/owlvit-base-patch32"
+PROMPT_TEMPLATE = "a photo of a {}"
+
+EPOCHS = 20
+BATCH_SIZE = 8
+LEARNING_RATE = 1e-4                        # <- back to 1e-4
+
+TRAIN_VISION_BACKBONE = True                # <- changed
+
+HORIZONTAL_FLIP_PROB = 0.5
+COLOR_JITTER = 0.2
+```
+
+### What to compare
+
+| Combination | What to look for |
+| --- | --- |
+| 1: baseline | Accuracy compared with the original OWL-ViT. |
+| 2: smaller learning rate | How fast the losses fall, and the validation mAP after 20 epochs, compared with combination 1. |
+| 3: train the image encoder | Accuracy, the gap between training and validation loss (overfitting), time per epoch, and GPU memory. |
 
 On a free GPU, combinations 1 and 2 take about 4 minutes each and combination 3
 about 8 minutes. They take longer when other groups are training, so run them inside
@@ -285,53 +362,29 @@ about 8 minutes. They take longer when other groups are training, so run them in
 ls ~/weights
 ```
 
-**Laptop:** download the model of the run you want, for example `combo1_baseline`:
+**Laptop:** download the model of the run you want, for example `combo1_baseline`, and the
+`detect.py` script:
 
 ```bash
 scp -r groupXX@DGX-IP:~/weights/combo1_baseline/best ./owlvit_combo1
+scp groupXX@DGX-IP:~/code/detect.py .
 ```
 
 The model folder is about 600 MB.
 
-### Use the model on your computer
-
-**Laptop:** install the libraries once:
+**Laptop:** install the libraries once, then run the model on any photo:
 
 ```bash
 pip install torch transformers==4.46.3 pillow
+python detect.py owlvit_combo1 my_photo.jpg
 ```
 
-Save this as `detect.py` next to the `owlvit_combo1` folder, then run `python detect.py my_photo.jpg`:
-
-```python
-import json, sys
-import torch
-from PIL import Image, ImageOps
-from transformers import OwlViTForObjectDetection, OwlViTProcessor
-
-MODEL_DIR = "owlvit_combo1"
-THRESHOLD = 0.3                       # minimum score to show a box
-
-processor = OwlViTProcessor.from_pretrained(MODEL_DIR)
-model = OwlViTForObjectDetection.from_pretrained(MODEL_DIR).eval()
-prompts = json.load(open(f"{MODEL_DIR}/prompts.json"))          # the exact training prompts
-names = [c["name"] for c in json.load(open(f"{MODEL_DIR}/categories.json"))]
-
-image = ImageOps.exif_transpose(Image.open(sys.argv[1])).convert("RGB")
-inputs = processor(text=[prompts], images=image, return_tensors="pt")
-with torch.no_grad():
-    outputs = model(**inputs)
-result = processor.post_process_object_detection(
-    outputs, threshold=THRESHOLD, target_sizes=torch.tensor([[image.height, image.width]]))[0]
-for box, score, label in zip(result["boxes"], result["scores"], result["labels"]):
-    print(f"{names[label]:<20} score {score:.2f}  box {[round(v) for v in box.tolist()]}")
-```
-
-Always give the model the prompts from `prompts.json`. They are the same text it was trained with.
+It prints each object found with its score and box, and saves `my_photo_result.jpg` with the boxes
+drawn. It always gives the model the prompts from `prompts.json`, the same text it was trained with.
 
 ---
 
-## Common problems
+## Common problems in Part 1
 
 | Problem | Fix |
 | --- | --- |
@@ -342,17 +395,250 @@ Always give the model the prompts from `prompts.json`. They are the same text it
 | `image(s) in the JSON were not found` | Upload the same photos you annotated in CVAT, with the same file names. |
 | `out of memory` | The GPU is shared by all groups. Lower `BATCH_SIZE` (e.g. 4) and run again. |
 | Training is slow | Other groups are training too. Run it in tmux, detach, and come back later. |
-| You broke a script | **DGX**, outside the container: `cp /home/share/owlvit_lab/*.py ~/code/` restores fresh copies. |
+| You broke a script | **DGX**, outside the container: `cp -r /home/share/owlvit_lab/*.py /home/share/owlvit_lab/jetson ~/code/` restores fresh copies. |
 | You lost your SSH connection | Log in again and run `tmux attach -t owl`. |
 | A run name got `_2` added | You reused a `RUN_NAME`. Use the new folder name in the download commands, or delete the old run first: `rm -r ~/weights/combo1_baseline` (on the DGX). |
 
 ---
 
-## Lab report
+# Part 2: Inference on the Jetson Orin Nano
 
-### What each run records
+You will run your best model on a Jetson Orin Nano in the `dustynv/pytorch:2.1-r36.2.0` container.
+A web page, like the NanoOWL demo, shows the camera with boxes drawn on it. You type what to look
+for in a box at the bottom:
 
-Every run saves its training record in `~/weights/<RUN_NAME>/metrics/`. These files are small, so
+```text
+[screwdriver, multimeter, breadboard]
+```
+
+## 8. Export your model on the DGX
+
+Pick the combination with the best test mAP50-95 (the end of its training output, or
+`results_table.csv` from the lab report).
+
+**DGX:** start the container if it isn't running: `~/train.sh`
+
+**Container:**
+
+```bash
+python /workspace/code/export_jetson.py combo1_baseline
+exit
+```
+
+Replace `combo1_baseline` with your run. Without a run name, the script lists the runs you can
+export. It makes one file, `~/weights/owlvit_jetson_combo1_baseline.tar` (about 620 MB), with:
+
+| Inside the file | What it is |
+| --- | --- |
+| `model/` | your fine-tuned model, with its class names and training prompts |
+| `web_demo.py`, `index.html` | the live web page |
+| `detect_image.py` | tests the model on one photo |
+| `Dockerfile` | adds the needed libraries to `dustynv/pytorch:2.1-r36.2.0` |
+| `test_images/` | 3 of your test photos per class, to try the model without a camera |
+
+---
+
+## 9. Copy the model to the Jetson
+
+**Laptop:** download it from the DGX, then send it to the Jetson:
+
+```bash
+scp groupXX@DGX-IP:~/weights/owlvit_jetson_combo1_baseline.tar .
+scp owlvit_jetson_combo1_baseline.tar JETSON-USER@JETSON-IP:~/
+```
+
+**Jetson:** unpack it:
+
+```bash
+cd ~
+tar xf owlvit_jetson_combo1_baseline.tar
+ls ~/owlvit_jetson          # Dockerfile  detect_image.py  index.html  model  test_images  web_demo.py
+```
+
+> Unpacking another export later replaces the model in `~/owlvit_jetson`. To keep both, rename
+> the old folder first: `mv ~/owlvit_jetson ~/owlvit_jetson_old`.
+
+---
+
+## 10. Prepare the Jetson (once per Jetson)
+
+Skip this step if `sudo docker images` on the Jetson already lists `owlvit-jetson`. If `sudo docker`
+says `command not found`, Docker must be installed first (see "For the instructor" at the end).
+
+**Jetson:** check the software version. The container needs JetPack 6 (L4T `R36`):
+
+```bash
+cat /etc/nv_tegra_release        # starts with: # R36 (release), ...
+```
+
+Download the PyTorch container and add the libraries. This needs internet and about 15 GB of
+free disk space (check with `df -h ~`):
+
+```bash
+sudo docker pull dustynv/pytorch:2.1-r36.2.0
+cd ~/owlvit_jetson
+sudo docker build -t owlvit-jetson:1.0 .
+```
+
+The `Dockerfile` adds Pillow, OpenCV and the same `transformers` version (4.46.3) used for
+training on the DGX. When the build finishes it prints `naming to docker.io/library/owlvit-jetson:1.0`.
+
+Check that the container can use the Jetson GPU:
+
+```bash
+sudo docker run --rm --runtime nvidia owlvit-jetson:1.0 \
+    python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+You should see `True` and the GPU name, for example `True Orin`.
+
+---
+
+## 11. Start the Jetson container
+
+**Jetson:**
+
+```bash
+cd ~/owlvit_jetson
+sudo docker run --runtime nvidia -it --rm --network host \
+    --device /dev/video0 \
+    -v ~/owlvit_jetson:/workspace \
+    owlvit-jetson:1.0
+```
+
+- **`--runtime nvidia`** gives the container the Jetson GPU.
+- **`--network host`** makes the web page reachable from your laptop.
+- **`--device /dev/video0`** gives it the USB camera. **No camera?** Remove that line.
+- **`-v ~/owlvit_jetson:/workspace`** shares your folder: files the container writes (like
+  `result.jpg`) appear in `~/owlvit_jetson` on the Jetson.
+
+The prompt changes to `root@...:/workspace#`.
+
+**Jetson container:** check:
+
+```bash
+ls                                    # Dockerfile  detect_image.py  index.html  model  test_images  web_demo.py
+ls /dev/video*                        # /dev/video0  (only with a camera)
+python3 -c "import torch; print('GPU ready:', torch.cuda.is_available())"     # GPU ready: True
+```
+
+---
+
+## 12. Test the model on one photo
+
+**Jetson container:**
+
+```bash
+ls test_images                                         # pick one, e.g. screwdriver_IMG_0042.jpg
+python3 detect_image.py test_images/screwdriver_IMG_0042.jpg
+```
+
+It prints each object found, with its score and box, and saves `result.jpg` with the boxes drawn.
+To look at it, open `~/owlvit_jetson/result.jpg` on the Jetson desktop, or copy it to your laptop:
+
+```bash
+scp JETSON-USER@JETSON-IP:~/owlvit_jetson/result.jpg .
+```
+
+`detect_image.py` uses the Hugging Face `pipeline` with your model folder and the exact training
+prompts from `model/prompts.json`. It is a good first check that the model works on the Jetson.
+
+---
+
+## 13. Run the live web page
+
+**Jetson container:**
+
+```bash
+python3 web_demo.py
+```
+
+Loading the model takes a little while. It's ready when it prints:
+
+```text
+Open http://<this-device-ip>:7860 in a browser (Ctrl-C to stop).
+```
+
+**Laptop:** open **`http://JETSON-IP:7860`** in a browser. On the Jetson's own desktop, use
+`http://localhost:7860`. To find `JETSON-IP`, run `hostname -I` on the Jetson.
+
+### Using the page
+
+- **Camera view:** your camera, with a colored box and score for every object found.
+- **Prompt box at the bottom:** type the objects to find, in brackets, separated by commas, then
+  press Enter or **Detect**. It starts with your trained classes.
+- **Trained classes:** click a class name to add it to the prompt.
+- **threshold slider:** only boxes with a score above it are shown. Lower it to see more boxes,
+  raise it to remove wrong ones.
+- **Upload photo:** run the model on a JPG or PNG from your laptop or phone.
+  **Back to camera** returns to the live view.
+- **Top-right status line:** frames per second, time per frame in the model, the GPU, and the
+  number of objects found.
+
+### How prompts work
+
+| You type | The model looks for |
+| --- | --- |
+| `[screwdriver, multimeter]` | your trained classes, with the exact training sentences: `a photo of a screwdriver`, `a photo of a multimeter` |
+| `[Screwdriver]`, `[a screwdriver]`, `[the_screwdriver]` | the same as `screwdriver` (capitals, `a`/`an`/`the` and `_` don't matter) |
+| `[pliers, coffee mug]` | words you did not train on, tried "zero-shot" as `a photo of a pliers` and `a photo of a coffee mug` |
+
+Your model was fine-tuned only on your classes, so new words usually work worse than with the
+original OWL-ViT. NanoOWL's nested prompts (`[a face [an eye]]`) and `(...)` classification
+aren't supported here; use a flat list.
+
+**To stop the page:** press `Ctrl-C`. Type `exit` to leave the container.
+
+### No camera? Other inputs
+
+Add `--source` to choose what the page shows:
+
+```bash
+python3 web_demo.py --source test_images      # loops over your test photos, 3 seconds each
+python3 web_demo.py --source my_video.mp4     # a video file in ~/owlvit_jetson (loops)
+python3 web_demo.py --source 1                # the second camera (/dev/video1)
+```
+
+Other options:
+
+| Option | What it does |
+| --- | --- |
+| `--threshold 0.2` | starting value of the threshold slider (default 0.3) |
+| `--resolution 1280x720` | camera resolution (default 640x480) |
+| `--nms 0` | keep overlapping boxes of the same label (default 0.5 removes duplicates) |
+| `--fp32` | run in float32 instead of float16: slower, for comparison |
+| `--port 7861` | use another port, then open `http://JETSON-IP:7861` |
+
+### Things to try
+
+- **Trained vs. new words:** compare the scores for a trained class and an object you never labeled.
+- **Threshold:** find the value where the wrong boxes disappear but the right ones stay.
+- **Speed:** note the FPS and model time in the status line, then restart with `--fp32` and compare.
+- **Real conditions:** try other lighting, distances and backgrounds than in your training photos.
+
+---
+
+## Common problems in Part 2
+
+| Problem | Fix |
+| --- | --- |
+| `error gathering device information ... "/dev/video0"` | No camera is connected. Plug it in, or remove the `--device /dev/video0` line. |
+| The page shows "Can't open camera" | Another program is using the camera, or it's a different number: try `--source 1`. |
+| `GPU ready: False`, or `CUDA-enabled PyTorch is required` | You left out `--runtime nvidia` in step 11. |
+| The page doesn't open on the laptop | Check `JETSON-IP` with `hostname -I` and that the laptop is on the same network. Try `http://localhost:7860` on the Jetson itself. |
+| `is not an exported model folder` | Run the scripts from `/workspace` (step 11), and check that `ls model` shows `prompts.json`. |
+| `Killed`, or the Jetson freezes | It ran out of memory. Close the browser and other programs on the Jetson and use the page from your laptop. |
+| Very slow (1 to 2 FPS) | Check that the status line shows `Orin` and `float16`, not `CPU`. Run `sudo jetson_clocks` on the Jetson for full speed. |
+| `docker build` fails while installing packages | The Jetson has no internet. Ask your instructor for the prepared image (see "For the instructor"). |
+| Upload says "Can't read that file" | Upload a JPG or PNG. iPhone HEIC photos aren't supported. |
+
+---
+
+# Lab report
+
+## What each run records
+
+Every training run saves its record in `~/weights/<RUN_NAME>/metrics/`. These files are small, so
 they're quick to download.
 
 | File | What it contains |
@@ -364,7 +650,7 @@ they're quick to download.
 | `test_pr_curve.csv` | Precision-recall curve on the test images for every class (IoU 0.5), for both models. |
 | `run_summary.json` | Your settings, the dataset size (images and boxes per class and split), trainable parameters, best epoch, training time, peak GPU memory, and the final test scores. |
 
-### Download the data to your computer
+## Download the data to your computer
 
 When all three combinations have finished, run these on your **laptop**:
 
@@ -395,7 +681,7 @@ lab_report/
 If you run the commands a second time, delete `lab_report` first. Otherwise `scp` puts the new copy
 inside the old folder.
 
-### Make the plots
+## Make the plots
 
 **Laptop:**
 
@@ -420,200 +706,7 @@ This saves the figures and a results table in `lab_report/figures/`:
 | `fig9_val_ap_per_class.png` | Validation AP50-95 per class during training |
 | `results_table.csv` | Settings, parameters, time, GPU memory and test mAP of each combination |
 
-The script `plot_results.py` (also in `~/code` on the DGX):
-
-```python
-"""Make the lab-report figures from your OWL-ViT training runs.
-
-Run on YOUR computer (not the DGX):
-    pip install pandas matplotlib
-    python plot_results.py lab_report
-
-lab_report/ must contain one folder per run, each holding that run's metrics files
-(epoch_history.csv, step_history.csv, val_per_class_history.csv, test_per_class.csv,
-test_pr_curve.csv, run_summary.json). The figures and a results table are saved in
-lab_report/figures/.
-"""
-import json
-import sys
-from pathlib import Path
-
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import pandas as pd
-
-root = Path(sys.argv[1] if len(sys.argv) > 1 else "lab_report")
-out = root / "figures"
-out.mkdir(parents=True, exist_ok=True)
-
-# ---------- load every run ----------
-runs = {}
-for folder in sorted(p for p in root.iterdir() if (p / "epoch_history.csv").is_file()):
-    run = {"epochs": pd.read_csv(folder / "epoch_history.csv"),
-           "summary": json.loads((folder / "run_summary.json").read_text())}
-    for name, file in (("steps", "step_history.csv"), ("val_class", "val_per_class_history.csv"),
-                       ("test", "test_per_class.csv"), ("pr", "test_pr_curve.csv")):
-        run[name] = pd.read_csv(folder / file) if (folder / file).is_file() else None
-    runs[folder.name] = run
-if not runs:
-    sys.exit(f"No runs found in {root}. Each run folder needs epoch_history.csv (see the guide).")
-print("Runs:", ", ".join(runs))
-colors = dict(zip(runs, plt.rcParams["axes.prop_cycle"].by_key()["color"]))
-
-
-def save(figure, name):
-    figure.tight_layout()
-    figure.savefig(out / name, dpi=150)
-    plt.close(figure)
-    print("saved", out / name)
-
-
-# ---------- Fig 0: your dataset (boxes per class in each split) ----------
-counts = next(iter(runs.values()))["summary"].get("boxes_per_class")
-if counts:
-    ax = pd.DataFrame(counts).plot.bar(figsize=(8, 4.5), rot=0, title="Labeled boxes per class and split")
-    ax.set_ylabel("number of boxes")
-    ax.legend(bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
-    for container in ax.containers:
-        ax.bar_label(container, fontsize=7)
-    save(ax.figure, "fig0_dataset_boxes.png")
-
-
-# ---------- Fig 1: train and validation loss per epoch ----------
-figure, ax = plt.subplots(figsize=(7, 4.5))
-for name, run in runs.items():
-    e = run["epochs"][run["epochs"].epoch > 0]
-    ax.plot(e.epoch, e.train_loss, color=colors[name], label=f"{name} train")
-    ax.plot(e.epoch, e.val_loss, color=colors[name], linestyle="--", label=f"{name} val")
-ax.set(xlabel="epoch", ylabel="loss", title="Training (solid) and validation (dashed) loss")
-ax.legend(fontsize=8)
-save(figure, "fig1_loss_per_epoch.png")
-
-# ---------- Fig 2: validation mAP per epoch (epoch 0 = original OWL-ViT) ----------
-figure, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharey=True)
-for ax, metric in zip(axes, ("val_mAP50", "val_mAP50-95")):
-    for name, run in runs.items():
-        e = run["epochs"]
-        ax.plot(e.epoch, e[metric], marker="o", markersize=3, color=colors[name], label=name)
-    ax.set(xlabel="epoch (0 = before training)", title=metric.replace("val_", "Validation "), ylim=(0, 1))
-    ax.grid(alpha=0.3)
-axes[0].set_ylabel("mAP")
-axes[0].legend(fontsize=8)
-save(figure, "fig2_val_map_per_epoch.png")
-
-# ---------- Fig 3: training loss at every step ----------
-figure, ax = plt.subplots(figsize=(7, 4.5))
-for name, run in runs.items():
-    s = run["steps"]
-    if s is None:
-        continue
-    ax.plot(s.global_step, s.loss, color=colors[name], alpha=0.2)
-    ax.plot(s.global_step, s.loss.rolling(20, min_periods=1).mean(), color=colors[name], label=f"{name} (moving avg.)")
-ax.set(xlabel="training step", ylabel="loss", title="Training loss per step")
-ax.legend(fontsize=8)
-save(figure, "fig3_loss_per_step.png")
-
-# ---------- Fig 4: the three parts of the loss ----------
-figure, axes = plt.subplots(1, 3, figsize=(14, 4))
-for ax, part, title in zip(axes, ("class", "l1", "giou"), ("Classification (focal)", "Box L1", "Box GIoU")):
-    for name, run in runs.items():
-        e = run["epochs"][run["epochs"].epoch > 0]
-        ax.plot(e.epoch, e[f"train_{part}_loss"], color=colors[name], label=f"{name} train")
-        ax.plot(e.epoch, e[f"val_{part}_loss"], color=colors[name], linestyle="--", label=f"{name} val")
-    ax.set(xlabel="epoch", title=title)
-axes[0].legend(fontsize=7)
-save(figure, "fig4_loss_components.png")
-
-# ---------- Fig 5: learning rate schedule ----------
-figure, ax = plt.subplots(figsize=(7, 4))
-for name, run in runs.items():
-    if run["steps"] is not None:
-        ax.plot(run["steps"].global_step, run["steps"].learning_rate, color=colors[name], label=name)
-ax.set(xlabel="training step", ylabel="learning rate", title="Learning rate schedule (warm-up + cosine)")
-ax.legend(fontsize=8)
-save(figure, "fig5_learning_rate.png")
-
-# ---------- Fig 6: test mAP per run vs the original model ----------
-rows = []
-for name, run in runs.items():
-    t = run["summary"].get("test")
-    if t:
-        rows.append({"model": name, "mAP50": t["mAP50"], "mAP50-95": t["mAP50-95"]})
-first = next(iter(runs.values()))["summary"].get("original_model_test")
-if first:
-    rows.insert(0, {"model": "original OWL-ViT", "mAP50": first["mAP50"], "mAP50-95": first["mAP50-95"]})
-if rows:
-    table = pd.DataFrame(rows).set_index("model")
-    ax = table.plot.bar(figsize=(9, 4.5), rot=15, ylim=(0, 1.05), title="Test mAP (untouched test images)")
-    ax.legend(bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
-    for container in ax.containers:
-        ax.bar_label(container, fmt="%.2f", fontsize=7)
-    save(ax.figure, "fig6_test_map.png")
-
-# ---------- Fig 7: test AP per class ----------
-per_class = []
-for name, run in runs.items():
-    t = run["test"]
-    if t is None:
-        continue
-    for _, r in t[t["class"] != "ALL"].iterrows():
-        label = name if r["model"] == "fine-tuned" else "original OWL-ViT"
-        per_class.append({"class": r["class"], "model": label, "AP50-95": r["AP50-95"]})
-if per_class:
-    pivot = (pd.DataFrame(per_class).drop_duplicates(["class", "model"])
-             .pivot(index="class", columns="model", values="AP50-95"))
-    pivot = pivot[["original OWL-ViT"] + [c for c in pivot.columns if c != "original OWL-ViT"]]
-    ax = pivot.plot.bar(figsize=(12, 4.5), rot=0, ylim=(0, 1), title="Test AP50-95 per class")
-    ax.set_ylabel("AP50-95")
-    ax.legend(bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
-    save(ax.figure, "fig7_test_ap_per_class.png")
-
-# ---------- Fig 8: precision-recall curves on the test images (IoU 0.5) ----------
-with_pr = {n: r for n, r in runs.items() if r["pr"] is not None}
-if with_pr:
-    figure, axes = plt.subplots(1, len(with_pr), figsize=(5 * len(with_pr), 4.5), squeeze=False)
-    for ax, (name, run) in zip(axes[0], with_pr.items()):
-        pr = run["pr"][run["pr"]["model"] == "fine-tuned"]
-        for cls, curve in pr.groupby("class"):
-            ax.plot(curve.recall, curve.precision, label=cls)
-        ax.set(xlabel="recall", ylabel="precision", xlim=(0, 1), ylim=(0, 1.02), title=f"{name}\nPR curves, IoU 0.5")
-        ax.grid(alpha=0.3)
-        ax.legend(fontsize=7, loc="lower left")
-    save(figure, "fig8_pr_curves.png")
-
-# ---------- Fig 9: validation AP per class during training ----------
-with_class = {n: r for n, r in runs.items() if r["val_class"] is not None}
-if with_class:
-    figure, axes = plt.subplots(1, len(with_class), figsize=(5 * len(with_class), 4.5), squeeze=False, sharey=True)
-    for ax, (name, run) in zip(axes[0], with_class.items()):
-        for cls, curve in run["val_class"].groupby("class"):
-            ax.plot(curve.epoch, curve["AP50-95"], label=cls)
-        ax.set(xlabel="epoch", title=f"{name}\nValidation AP50-95 per class", ylim=(0, 1))
-        ax.grid(alpha=0.3)
-    axes[0][0].legend(fontsize=7)
-    save(figure, "fig9_val_ap_per_class.png")
-
-# ---------- Results table ----------
-table = []
-for name, run in runs.items():
-    s, h = run["summary"], run["summary"]["hyperparameters"]
-    table.append({"run": name, "model": h["MODEL_NAME"].split("/")[-1], "learning_rate": h["LEARNING_RATE"],
-                  "batch_size": h["BATCH_SIZE"], "train_vision_backbone": h["TRAIN_VISION_BACKBONE"],
-                  "flip": h["HORIZONTAL_FLIP_PROB"], "color_jitter": h["COLOR_JITTER"],
-                  "trainable_params": s["trainable_parameters"], "epochs_run": s.get("epochs_completed"),
-                  "best_epoch": s.get("best_epoch"),
-                  "train_minutes": round(s.get("training_seconds", float("nan")) / 60, 1),
-                  "peak_gpu_gb": s.get("peak_gpu_memory_gb"),
-                  "test_mAP50": round(s.get("test", {}).get("mAP50", float("nan")), 3),
-                  "test_mAP50-95": round(s.get("test", {}).get("mAP50-95", float("nan")), 3)})
-table = pd.DataFrame(table)
-table.to_csv(out / "results_table.csv", index=False)
-print("\n" + table.to_string(index=False))
-print(f"\nsaved {out / 'results_table.csv'}")
-```
-
-### What to put in your lab report
+## What to put in your lab report
 
 1. **Title:** group number, members, and which DGX you used.
 2. **Introduction:** what OWL-ViT is (an open-vocabulary detector that finds objects described by
@@ -653,3 +746,32 @@ print(f"\nsaved {out / 'results_table.csv'}")
    - **Next steps:** what would you try next to improve the model?
 7. **Conclusion:** 3–5 sentences.
 8. **Appendix:** the `run_summary.json` settings of each run, and any extra runs you tried.
+
+---
+
+# For the instructor
+
+- **Installing Docker on the Jetson** (once, needs internet). JetPack 6 doesn't always include
+  Docker. These are the steps from NVIDIA's Jetson AI Lab setup guide:
+
+  ```bash
+  sudo apt update && sudo apt install -y nvidia-container curl
+  curl https://get.docker.com | sh && sudo systemctl --now enable docker
+  sudo nvidia-ctk runtime configure --runtime=docker
+  sudo systemctl restart docker
+  ```
+
+- **Jetson without internet:** build the image on any arm64 machine with Docker, for example a
+  DGX Spark, and copy it over:
+
+  ```bash
+  sudo docker save owlvit-jetson:1.0 | gzip > owlvit-jetson.tar.gz      # on the build machine
+  gunzip -c owlvit-jetson.tar.gz | sudo docker load                       # on the Jetson
+  ```
+
+- **Testing on a DGX Spark:** the Jetson container runs there too, but only on the CPU, because
+  its PyTorch build only includes GPU code for Orin (sm_87). Use the same commands without
+  `--runtime nvidia` and `--device`. `web_demo.py` switches to the CPU by itself; add `--cpu` to
+  `detect_image.py`.
+- **Where the files are:** every group's `~/code` holds all the scripts. Fresh copies are in
+  `/home/share/owlvit_lab` on each DGX.
