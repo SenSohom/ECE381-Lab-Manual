@@ -2,13 +2,15 @@
 
 This lab has two parts:
 
-- **Part 1, training (steps 1–7):** upload your CVAT dataset to the DGX, prepare it, and fine-tune
-  OWL-ViT on the DGX's GPU with three different settings.
-- **Part 2, inference (steps 8–13):** export your best model, copy it to a Jetson Orin Nano, and
-  run it live on a camera, with a web page where you type what to detect.
+- **Part 1, training on the DGX (steps 1–6):** upload your CVAT dataset from your laptop to the
+  DGX, prepare it, and fine-tune OWL-ViT on the DGX's GPU with three different settings.
+- **Part 2, on the Jetson Orin Nano (steps 7–12):** copy your trained models and training data
+  from the DGX to the Jetson, make the lab report plots, and run your models live on a camera,
+  with a web page where you type what to detect.
 
-The **lab report** section at the end explains how to download your training data, make the
-plots and write the report.
+Your laptop is only used to upload your dataset and to log in to the DGX. Nothing is downloaded
+to it: after training, everything goes to the Jetson. The **lab report** section at the end lists
+what to put in your report.
 
 ## Before you start
 
@@ -20,8 +22,9 @@ You need:
 | Your DGX number | `spark1`, `spark2` or `spark3` |
 | The DGX address | shown in class (written as `DGX-IP` below) |
 | Your photo folder, with one sub-folder per class | `MyDataset/` with 5 sub-folders of 125 photos each |
-| The COCO JSON exported from CVAT | `instances_default.json` |
-| **For Part 2:** the Jetson address and login | given in class (written as `JETSON-IP` and `JETSON-USER`) |
+| The COCO JSON file(s) exported from CVAT | `instances_default.json` (one, or one per CVAT task) |
+| **For Part 2:** a Jetson Orin Nano with a screen, keyboard and mouse | one per group, shown in class |
+| **For Part 2:** the Jetson login and password | given in class |
 | **For Part 2:** a USB webcam plugged into the Jetson | optional: you can also test with photos |
 
 To get the JSON from CVAT, export your task or project with the format **COCO 1.0**. Unzip the
@@ -36,10 +39,13 @@ In every command below, replace:
 Each command block says where to run it:
 
 - **Laptop** means a terminal on your own computer: Terminal on macOS/Linux, PowerShell on Windows.
+  You use it only to upload your dataset (step 2) and to log in to the DGX (step 1).
 - **DGX** means your SSH session on the DGX.
 - **Container** means inside the DGX training container, after step 3.
-- **Jetson** means an SSH session on the Jetson (`ssh JETSON-USER@JETSON-IP`) or a terminal on its desktop.
-- **Jetson container** means inside the Jetson container, after step 11.
+- **Jetson terminal** means a terminal on the Jetson's desktop. You use it only to start the
+  Jetson container (step 8).
+- **Jetson container** means inside the PyTorch container on the Jetson, after step 8. Everything
+  else on the Jetson runs here.
 
 All the scripts are already in your `~/code` folder on the DGX. You only edit one block of
 settings in `train_owlvit.py`.
@@ -48,10 +54,9 @@ settings in `train_owlvit.py`.
 | --- | --- | --- |
 | `preprocess.py` | DGX container | Prepares your dataset (step 4) |
 | `train_owlvit.py` | DGX container | Fine-tunes OWL-ViT (steps 5 and 6) |
-| `detect.py` | your laptop | Runs your model on a photo (step 7) |
-| `export_jetson.py` | DGX container | Packs your model for the Jetson (step 8) |
-| `jetson/` | Jetson container | The live web page and a one-photo test (steps 12 and 13) |
-| `plot_results.py` | your laptop | Makes the lab report figures |
+| `export_jetson.py` | DGX container | Packs your models and training data for the Jetson (step 7) |
+| `plot_results.py` | Jetson container | Makes the lab report figures (step 10) |
+| `jetson/` | Jetson container | A one-photo test and the live web page (steps 11 and 12) |
 
 > Tip: avoid spaces in folder and file names. If a name has spaces, put the whole path in quotes.
 
@@ -103,6 +108,8 @@ scp C:\Users\YOU\Downloads\instances_default.json groupXX@DGX-IP:~/data/MyDatase
 
 - **The first command** uploads the photo folder and its 5 class sub-folders. It can take a few minutes.
 - **The second command** puts the CVAT JSON inside that same folder. Skip it if the JSON is already in the folder.
+- **Several JSON files** (for example one per CVAT task) are fine. Put each one next to the photos of
+  that task, inside your photo folder, before you upload. Photos can be in sub-folders at any depth.
 - **Finding the path:** on macOS you can drag the folder from Finder into the terminal to paste its path.
 
 **DGX:** check the upload:
@@ -111,7 +118,7 @@ scp C:\Users\YOU\Downloads\instances_default.json groupXX@DGX-IP:~/data/MyDatase
 ls ~/data/MyDataset
 ```
 
-You should see your 5 class folders and `instances_default.json`.
+You should see your class folders and your JSON file(s).
 
 ---
 
@@ -132,8 +139,8 @@ container you are "root", but only within your own files.
 
 ```bash
 nvidia-smi                                       # the GPU "NVIDIA GB10" is listed
-ls /workspace/data/MyDataset                     # your 5 class folders + the JSON
-ls /workspace/code                               # detect.py  export_jetson.py  jetson  plot_results.py  preprocess.py  train_owlvit.py
+ls /workspace/data/MyDataset                     # your class folders + the JSON
+ls /workspace/code                               # export_jetson.py  jetson  plot_results.py  preprocess.py  train_owlvit.py
 python -c "import torch; print('GPU ready:', torch.cuda.is_available())"   # GPU ready: True
 ```
 
@@ -165,13 +172,17 @@ python /workspace/code/preprocess.py /workspace/data/MyDataset
 
 This takes about a minute. The script:
 
-1. **Matches photos:** links every image in the CVAT JSON to the right photo in your folder.
-2. **Converts to PNG:** handles jpg, jpeg, png, heic, webp and more. It applies the photo's
+1. **Finds everything:** every photo and every CVAT JSON file in your folder and all its
+   sub-folders. Several JSON files are merged, and labels with the same name (ignoring capitals,
+   spaces, `-` and `_`) become one class.
+2. **Matches photos:** links every image in the JSON files to the right photo in your folder.
+3. **Converts to PNG:** handles jpg, jpeg, png, heic, webp and more. It applies the photo's
    rotation the same way CVAT showed it to you.
-3. **Resizes:** makes every image 768 × 768, OWL-ViT's input size, and **rescales every box** to
+4. **Resizes:** makes every image 768 × 768, OWL-ViT's input size, and **rescales every box** to
    match. The file paths in the JSON are updated too.
-4. **Splits the data:** each class folder is split into **70% train, 15% validation (val) and 15% test**.
-   With 125 photos per class that's 87 / 19 / 19, so every class appears in every split.
+5. **Splits the data:** each class is split into **70% train, 15% validation (val) and 15% test**.
+   With 125 photos per class that's 87 / 19 / 19, so every class appears in every split. A photo's
+   class is the class its folder is named after, or else the label with the most boxes in it.
 
 The result is in `/workspace/data/processed/`:
 
@@ -184,17 +195,12 @@ processed/
   preview/                             a few images with their boxes drawn
 ```
 
-**Read the summary at the end.** Every class should have boxes in train, val and test. Fix anything
-marked `WARNING` before training.
+**Read the summary at the end.** Check the class list, and that every class has boxes in train,
+val and test. Fix anything marked `WARNING` before training. Files it can't use (other JSON files,
+broken photos, photos not in any JSON) are listed and skipped, not fatal.
 
-**Check the boxes by eye.** **Laptop:** download the previews:
-
-```bash
-scp -r groupXX@DGX-IP:~/data/processed/preview ./preview
-```
-
-Open the images. Each box should sit tightly around its object. If the boxes are shifted or
-rotated, tell the instructor before you train.
+The `preview` images (your photos with their boxes drawn) are copied to the Jetson with everything
+else, where you can look at them (step 9).
 
 You can run the script again at any time. It replaces the old `processed` folder.
 
@@ -279,7 +285,7 @@ For each combination:
 3. Save and quit, then run `python /workspace/code/train_owlvit.py`.
 4. Wait for `Done.` before starting the next combination.
 
-Use exactly these `RUN_NAME`s; the lab report commands expect them.
+Use exactly these `RUN_NAME`s, so your models and plots are named clearly.
 
 ### Combination 1: baseline
 
@@ -354,36 +360,6 @@ about 8 minutes. They take longer when other groups are training, so run them in
 
 ---
 
-## 7. Download the trained model to your computer
-
-**DGX:** list your runs:
-
-```bash
-ls ~/weights
-```
-
-**Laptop:** download the model of the run you want, for example `combo1_baseline`, and the
-`detect.py` script:
-
-```bash
-scp -r groupXX@DGX-IP:~/weights/combo1_baseline/best ./owlvit_combo1
-scp groupXX@DGX-IP:~/code/detect.py .
-```
-
-The model folder is about 600 MB.
-
-**Laptop:** install the libraries once, then run the model on any photo:
-
-```bash
-pip install torch transformers==4.46.3 pillow
-python detect.py owlvit_combo1 my_photo.jpg
-```
-
-It prints each object found with its score and box, and saves `my_photo_result.jpg` with the boxes
-drawn. It always gives the model the prompts from `prompts.json`, the same text it was trained with.
-
----
-
 ## Common problems in Part 1
 
 | Problem | Fix |
@@ -391,306 +367,127 @@ drawn. It always gives the model the prompts from `prompts.json`, the same text 
 | `Permission denied` when logging in | Check the password (`spark#-group#`, e.g. `spark1-group02`) and that you use your own DGX's address. |
 | `scp: No such file or directory` | The path on your laptop is wrong. Drag the folder into the terminal to get the exact path. |
 | `The container name "/groupXX-train" is already in use` | Your container is already running, probably in tmux. Run `tmux attach -t owl`. Or open a second shell in it with `docker exec -it groupXX-train bash`. |
-| `No COCO JSON found` | Upload the CVAT JSON into your photo folder (step 2, second command). |
+| `No COCO JSON found` | Upload the CVAT JSON into your photo folder (step 2, second command). Export it from CVAT as **COCO 1.0**. |
 | `image(s) in the JSON were not found` | Upload the same photos you annotated in CVAT, with the same file names. |
+| `match several photos and were skipped` | Two photos have the same name in different folders. Put each JSON next to its own photos (step 2), then run `preprocess.py` again. |
+| Too many classes, e.g. `screwdriver` and `screw driver` | Labels are merged only when they differ in capitals, spaces, `-` or `_`. Fix the label names in CVAT and export again. |
 | `out of memory` | The GPU is shared by all groups. Lower `BATCH_SIZE` (e.g. 4) and run again. |
 | Training is slow | Other groups are training too. Run it in tmux, detach, and come back later. |
 | You broke a script | **DGX**, outside the container: `cp -r /home/share/owlvit_lab/*.py /home/share/owlvit_lab/jetson ~/code/` restores fresh copies. |
 | You lost your SSH connection | Log in again and run `tmux attach -t owl`. |
-| A run name got `_2` added | You reused a `RUN_NAME`. Use the new folder name in the download commands, or delete the old run first: `rm -r ~/weights/combo1_baseline` (on the DGX). |
+| A run name got `_2` added | You reused a `RUN_NAME`, so both runs are kept and exported. To avoid it, delete the old run first: `rm -r ~/weights/combo1_baseline` (on the DGX). |
 
 ---
 
-# Part 2: Inference on the Jetson Orin Nano
+# Part 2: On the Jetson Orin Nano
 
-You will run your best model on a Jetson Orin Nano in the `dustynv/pytorch:2.1-r36.2.0` container.
-A web page, like the NanoOWL demo, shows the camera with boxes drawn on it. You type what to look
-for in a box at the bottom:
+After training, everything goes from the DGX to the Jetson Orin Nano: your trained models,
+everything recorded during training, the test predictions and your dataset previews. On the Jetson
+you make the lab report plots and run your models live on a camera.
 
-```text
-[screwdriver, multimeter, breadboard]
-```
+On the Jetson, everything runs **inside the PyTorch container** (`dustynv/pytorch:2.1-r36.2.0`,
+prepared by your instructor as `owlvit-jetson:1.0`). The Jetson's own terminal is used only to
+start the container (step 8).
 
-## 8. Export your model on the DGX
+## 7. Export everything on the DGX
 
-Pick the combination with the best test mAP50-95 (the end of its training output, or
-`results_table.csv` from the lab report).
+Do this when all three combinations have finished.
 
 **DGX:** start the container if it isn't running: `~/train.sh`
 
 **Container:**
 
 ```bash
-python /workspace/code/export_jetson.py combo1_baseline
-exit
+python /workspace/code/export_jetson.py
 ```
 
-Replace `combo1_baseline` with your run. Without a run name, the script lists the runs you can
-export. It makes one file, `~/weights/owlvit_jetson_combo1_baseline.tar` (about 620 MB), with:
+It packs every run in `~/weights` into one file, `~/weights/owlvit_jetson.tar` (about 2 GB for
+three runs). To pack only some runs, name them, e.g.
+`python /workspace/code/export_jetson.py combo1_baseline combo3_finetune_encoder`.
+If you train more runs later, export again; the new file replaces the old one.
 
-| Inside the file | What it is |
+On the Jetson, the file unpacks to:
+
+| Folder or file | What it is |
 | --- | --- |
-| `model/` | your fine-tuned model, with its class names and training prompts |
-| `web_demo.py`, `index.html` | the live web page |
-| `detect_image.py` | tests the model on one photo |
-| `Dockerfile` | adds the needed libraries to `dustynv/pytorch:2.1-r36.2.0` |
-| `test_images/` | 3 of your test photos per class, to try the model without a camera |
+| `models/<run>/` | the trained model of each run |
+| `lab_report/<run>/` | everything recorded during that run's training (see "Lab report") |
+| `lab_report/predictions_<run>/` | test images: green = your boxes, red = the model's boxes |
+| `lab_report/dataset_preview/` | a few of your images with the CVAT boxes |
+| `test_images/` | 3 of your test photos per class |
+| `web_demo.py`, `index.html` | the live camera web page |
+| `detect_image.py` | tests a model on one photo |
+| `plot_results.py` | makes the lab report figures |
 
 ---
 
-## 9. Copy the model to the Jetson
+## 8. Start the container on the Jetson
 
-**Laptop:** download it from the DGX, then send it to the Jetson:
+Log in on the Jetson's desktop and open a terminal.
 
-```bash
-scp groupXX@DGX-IP:~/weights/owlvit_jetson_combo1_baseline.tar .
-scp owlvit_jetson_combo1_baseline.tar JETSON-USER@JETSON-IP:~/
-```
-
-**Jetson:** unpack it:
+**Jetson terminal:** this is the only command you run outside the container:
 
 ```bash
-cd ~
-tar xf owlvit_jetson_combo1_baseline.tar
-ls ~/owlvit_jetson          # Dockerfile  detect_image.py  index.html  model  test_images  web_demo.py
-```
-
-> Unpacking another export later replaces the model in `~/owlvit_jetson`. To keep both, rename
-> the old folder first: `mv ~/owlvit_jetson ~/owlvit_jetson_old`.
-
----
-
-## 10. Prepare the Jetson (once per Jetson)
-
-Skip this step if `sudo docker images` on the Jetson already lists `owlvit-jetson`. If `sudo docker`
-says `command not found`, Docker must be installed first (see "For the instructor" at the end).
-
-**Jetson:** check the software version. The container needs JetPack 6 (L4T `R36`):
-
-```bash
-cat /etc/nv_tegra_release        # starts with: # R36 (release), ...
-```
-
-Download the PyTorch container and add the libraries. This needs internet and about 15 GB of
-free disk space (check with `df -h ~`):
-
-```bash
-sudo docker pull dustynv/pytorch:2.1-r36.2.0
-cd ~/owlvit_jetson
-sudo docker build -t owlvit-jetson:1.0 .
-```
-
-The `Dockerfile` adds Pillow, OpenCV and the same `transformers` version (4.46.3) used for
-training on the DGX. When the build finishes it prints `naming to docker.io/library/owlvit-jetson:1.0`.
-
-Check that the container can use the Jetson GPU:
-
-```bash
-sudo docker run --rm --runtime nvidia owlvit-jetson:1.0 \
-    python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-```
-
-You should see `True` and the GPU name, for example `True Orin`.
-
----
-
-## 11. Start the Jetson container
-
-**Jetson:**
-
-```bash
-cd ~/owlvit_jetson
 sudo docker run --runtime nvidia -it --rm --network host \
     --device /dev/video0 \
-    -v ~/owlvit_jetson:/workspace \
+    -v ~/owlvit_groupXX:/workspace \
     owlvit-jetson:1.0
 ```
 
-- **`--runtime nvidia`** gives the container the Jetson GPU.
-- **`--network host`** makes the web page reachable from your laptop.
-- **`--device /dev/video0`** gives it the USB camera. **No camera?** Remove that line.
-- **`-v ~/owlvit_jetson:/workspace`** shares your folder: files the container writes (like
-  `result.jpg`) appear in `~/owlvit_jetson` on the Jetson.
+`sudo` asks for the Jetson password. The prompt then changes to `root@...:/workspace#`.
 
-The prompt changes to `root@...:/workspace#`.
+- **`--runtime nvidia`** gives the container the Jetson GPU.
+- **`--network host`** lets the container reach the DGX and serve the web page.
+- **`--device /dev/video0`** gives it the USB camera. **No camera?** Remove that line.
+- **`-v ~/owlvit_groupXX:/workspace`** is your group's folder on the Jetson. It is created the
+  first time. Everything in `/workspace` is kept there; anything else in the container is deleted
+  when you leave it.
 
 **Jetson container:** check:
 
 ```bash
-ls                                    # Dockerfile  detect_image.py  index.html  model  test_images  web_demo.py
-ls /dev/video*                        # /dev/video0  (only with a camera)
 python3 -c "import torch; print('GPU ready:', torch.cuda.is_available())"     # GPU ready: True
+ls /dev/video*                                                                # /dev/video0  (only with a camera)
 ```
+
+To leave the container, type `exit`. To come back later, run the same `sudo docker run` command;
+your files are still in `~/owlvit_groupXX`.
 
 ---
 
-## 12. Test the model on one photo
+## 9. Copy your models and data from the DGX
 
 **Jetson container:**
 
 ```bash
-ls test_images                                         # pick one, e.g. screwdriver_IMG_0042.jpg
-python3 detect_image.py test_images/screwdriver_IMG_0042.jpg
+scp groupXX@DGX-IP:~/weights/owlvit_jetson.tar .
+tar xf owlvit_jetson.tar
+rm owlvit_jetson.tar
+ls                    # detect_image.py  index.html  lab_report  models  plot_results.py  test_images  web_demo.py
+ls models             # combo1_baseline  combo2_low_lr  combo3_finetune_encoder
 ```
 
-It prints each object found, with its score and box, and saves `result.jpg` with the boxes drawn.
-To look at it, open `~/owlvit_jetson/result.jpg` on the Jetson desktop, or copy it to your laptop:
+- **"Are you sure you want to continue connecting?":** you'll see this once per container session. Type `yes`.
+- **Password:** your DGX password, `spark#-group#`.
+- **A newer export** replaces the files with the same names; the figures you made stay.
 
-```bash
-scp JETSON-USER@JETSON-IP:~/owlvit_jetson/result.jpg .
-```
-
-`detect_image.py` uses the Hugging Face `pipeline` with your model folder and the exact training
-prompts from `model/prompts.json`. It is a good first check that the model works on the Jetson.
+**Looking at images:** `/workspace` in the container is the folder `~/owlvit_groupXX` on the
+Jetson. Open it in the Jetson's **Files** app to view any image. Start with
+`lab_report/dataset_preview`: each box should sit tightly around its object. If boxes are shifted or
+rotated, tell the instructor. Then look at the `lab_report/predictions_*` folders.
 
 ---
 
-## 13. Run the live web page
+## 10. Make the lab report plots
 
 **Jetson container:**
 
 ```bash
-python3 web_demo.py
+python3 plot_results.py lab_report
 ```
 
-Loading the model takes a little while. It's ready when it prints:
-
-```text
-Open http://<this-device-ip>:7860 in a browser (Ctrl-C to stop).
-```
-
-**Laptop:** open **`http://JETSON-IP:7860`** in a browser. On the Jetson's own desktop, use
-`http://localhost:7860`. To find `JETSON-IP`, run `hostname -I` on the Jetson.
-
-### Using the page
-
-- **Camera view:** your camera, with a colored box and score for every object found.
-- **Prompt box at the bottom:** type the objects to find, in brackets, separated by commas, then
-  press Enter or **Detect**. It starts with your trained classes.
-- **Trained classes:** click a class name to add it to the prompt.
-- **threshold slider:** only boxes with a score above it are shown. Lower it to see more boxes,
-  raise it to remove wrong ones.
-- **Upload photo:** run the model on a JPG or PNG from your laptop or phone.
-  **Back to camera** returns to the live view.
-- **Top-right status line:** frames per second, time per frame in the model, the GPU, and the
-  number of objects found.
-
-### How prompts work
-
-| You type | The model looks for |
-| --- | --- |
-| `[screwdriver, multimeter]` | your trained classes, with the exact training sentences: `a photo of a screwdriver`, `a photo of a multimeter` |
-| `[Screwdriver]`, `[a screwdriver]`, `[the_screwdriver]` | the same as `screwdriver` (capitals, `a`/`an`/`the` and `_` don't matter) |
-| `[pliers, coffee mug]` | words you did not train on, tried "zero-shot" as `a photo of a pliers` and `a photo of a coffee mug` |
-
-Your model was fine-tuned only on your classes, so new words usually work worse than with the
-original OWL-ViT. NanoOWL's nested prompts (`[a face [an eye]]`) and `(...)` classification
-aren't supported here; use a flat list.
-
-**To stop the page:** press `Ctrl-C`. Type `exit` to leave the container.
-
-### No camera? Other inputs
-
-Add `--source` to choose what the page shows:
-
-```bash
-python3 web_demo.py --source test_images      # loops over your test photos, 3 seconds each
-python3 web_demo.py --source my_video.mp4     # a video file in ~/owlvit_jetson (loops)
-python3 web_demo.py --source 1                # the second camera (/dev/video1)
-```
-
-Other options:
-
-| Option | What it does |
-| --- | --- |
-| `--threshold 0.2` | starting value of the threshold slider (default 0.3) |
-| `--resolution 1280x720` | camera resolution (default 640x480) |
-| `--nms 0` | keep overlapping boxes of the same label (default 0.5 removes duplicates) |
-| `--fp32` | run in float32 instead of float16: slower, for comparison |
-| `--port 7861` | use another port, then open `http://JETSON-IP:7861` |
-
-### Things to try
-
-- **Trained vs. new words:** compare the scores for a trained class and an object you never labeled.
-- **Threshold:** find the value where the wrong boxes disappear but the right ones stay.
-- **Speed:** note the FPS and model time in the status line, then restart with `--fp32` and compare.
-- **Real conditions:** try other lighting, distances and backgrounds than in your training photos.
-
----
-
-## Common problems in Part 2
-
-| Problem | Fix |
-| --- | --- |
-| `error gathering device information ... "/dev/video0"` | No camera is connected. Plug it in, or remove the `--device /dev/video0` line. |
-| The page shows "Can't open camera" | Another program is using the camera, or it's a different number: try `--source 1`. |
-| `GPU ready: False`, or `CUDA-enabled PyTorch is required` | You left out `--runtime nvidia` in step 11. |
-| The page doesn't open on the laptop | Check `JETSON-IP` with `hostname -I` and that the laptop is on the same network. Try `http://localhost:7860` on the Jetson itself. |
-| `is not an exported model folder` | Run the scripts from `/workspace` (step 11), and check that `ls model` shows `prompts.json`. |
-| `Killed`, or the Jetson freezes | It ran out of memory. Close the browser and other programs on the Jetson and use the page from your laptop. |
-| Very slow (1 to 2 FPS) | Check that the status line shows `Orin` and `float16`, not `CPU`. Run `sudo jetson_clocks` on the Jetson for full speed. |
-| `docker build` fails while installing packages | The Jetson has no internet. Ask your instructor for the prepared image (see "For the instructor"). |
-| Upload says "Can't read that file" | Upload a JPG or PNG. iPhone HEIC photos aren't supported. |
-
----
-
-# Lab report
-
-## What each run records
-
-Every training run saves its record in `~/weights/<RUN_NAME>/metrics/`. These files are small, so
-they're quick to download.
-
-| File | What it contains |
-| --- | --- |
-| `epoch_history.csv` | One row per epoch. Training and validation loss: total, classification, L1 and GIoU. Validation mAP50, mAP50-95 and mAP75. Learning rate, time and GPU memory. Epoch 0 is the original OWL-ViT before training. |
-| `step_history.csv` | One row per training step: the loss and its three parts, and the learning rate. |
-| `val_per_class_history.csv` | Validation AP50 and AP50-95 for every class after every epoch. |
-| `test_per_class.csv` | Final test AP per class, for your fine-tuned model and for the original OWL-ViT. |
-| `test_pr_curve.csv` | Precision-recall curve on the test images for every class (IoU 0.5), for both models. |
-| `run_summary.json` | Your settings, the dataset size (images and boxes per class and split), trainable parameters, best epoch, training time, peak GPU memory, and the final test scores. |
-
-## Download the data to your computer
-
-When all three combinations have finished, run these on your **laptop**:
-
-```bash
-mkdir lab_report
-scp -r groupXX@DGX-IP:~/weights/combo1_baseline/metrics lab_report/combo1_baseline
-scp -r groupXX@DGX-IP:~/weights/combo2_low_lr/metrics lab_report/combo2_low_lr
-scp -r groupXX@DGX-IP:~/weights/combo3_finetune_encoder/metrics lab_report/combo3_finetune_encoder
-scp -r groupXX@DGX-IP:~/weights/combo1_baseline/test_predictions lab_report/predictions_combo1
-scp -r groupXX@DGX-IP:~/weights/combo2_low_lr/test_predictions lab_report/predictions_combo2
-scp -r groupXX@DGX-IP:~/weights/combo3_finetune_encoder/test_predictions lab_report/predictions_combo3
-scp -r groupXX@DGX-IP:~/data/processed/preview lab_report/dataset_preview
-scp groupXX@DGX-IP:~/code/plot_results.py .
-```
-
-You now have:
-
-```
-plot_results.py
-lab_report/
-  combo1_baseline/            metrics of combination 1 (the CSV and JSON files above)
-  combo2_low_lr/              metrics of combination 2
-  combo3_finetune_encoder/    metrics of combination 3
-  predictions_combo1/ ...     test images with boxes, for each combination
-  dataset_preview/            your images with the CVAT boxes
-```
-
-If you run the commands a second time, delete `lab_report` first. Otherwise `scp` puts the new copy
-inside the old folder.
-
-## Make the plots
-
-**Laptop:**
-
-```bash
-pip install pandas matplotlib
-python plot_results.py lab_report
-```
-
-This saves the figures and a results table in `lab_report/figures/`:
+It prints the results table and saves the figures in `lab_report/figures/`. Open them in the
+Files app.
 
 | File | Shows |
 | --- | --- |
@@ -706,6 +503,134 @@ This saves the figures and a results table in `lab_report/figures/`:
 | `fig9_val_ap_per_class.png` | Validation AP50-95 per class during training |
 | `results_table.csv` | Settings, parameters, time, GPU memory and test mAP of each combination |
 
+---
+
+## 11. Test a model on one photo
+
+**Jetson container:**
+
+```bash
+ls test_images                                         # pick one, e.g. screwdriver_IMG_0042.jpg
+python3 detect_image.py test_images/screwdriver_IMG_0042.jpg
+```
+
+- **Which model:** it uses your run with the best test mAP50-95 and prints its name. To test
+  another one, add `--model`, e.g. `--model models/combo2_low_lr`.
+- **Output:** it prints each object found, with its score and box, and saves `result.jpg` with
+  the boxes drawn. Open `~/owlvit_groupXX/result.jpg` in the Files app.
+
+`detect_image.py` uses the Hugging Face `pipeline` with your model folder and the exact training
+prompts from `prompts.json`. It is a good first check that the model works on the Jetson.
+
+---
+
+## 12. Run the live web page
+
+**Jetson container:**
+
+```bash
+python3 web_demo.py
+```
+
+It uses your best run. For another model: `python3 web_demo.py --model models/combo2_low_lr`.
+Loading the model takes a little while. It's ready when it prints:
+
+```text
+Open http://<this-device-ip>:7860 in a browser (Ctrl-C to stop).
+```
+
+**Jetson desktop:** open **`http://localhost:7860`** in the web browser.
+
+### Using the page
+
+- **Camera view:** your camera, with a colored box and score for every object found.
+- **Prompt box at the bottom:** type the objects to find, in brackets, separated by commas, then
+  press Enter or **Detect**. It starts with your trained classes.
+- **Trained classes:** click a class name to add it to the prompt.
+- **threshold slider:** only boxes with a score above it are shown. Lower it to see more boxes,
+  raise it to remove wrong ones.
+- **Upload photo:** run the model on a JPG or PNG from the Jetson.
+  **Back to camera** returns to the live view.
+- **Top-right status line:** the model, frames per second, time per frame in the model, the GPU,
+  and the number of objects found.
+
+### How prompts work
+
+| You type | The model looks for |
+| --- | --- |
+| `[screwdriver, multimeter]` | your trained classes, with the exact training sentences: `a photo of a screwdriver`, `a photo of a multimeter` |
+| `[Screwdriver]`, `[a screwdriver]`, `[the_screwdriver]` | the same as `screwdriver` (capitals, `a`/`an`/`the` and `_` don't matter) |
+| `[pliers, coffee mug]` | words you did not train on, tried "zero-shot" as `a photo of a pliers` and `a photo of a coffee mug` |
+
+Your model was fine-tuned only on your classes, so new words usually work worse than with the
+original OWL-ViT. NanoOWL's nested prompts (`[a face [an eye]]`) and `(...)` classification
+aren't supported here; use a flat list.
+
+**To stop the page:** press `Ctrl-C`. Type `exit` to leave the container.
+
+### No camera? Other inputs and options
+
+```bash
+python3 web_demo.py --source test_images      # loops over your test photos, 3 seconds each
+python3 web_demo.py --source my_video.mp4     # a video file in ~/owlvit_groupXX (loops)
+python3 web_demo.py --source 1                # the second camera (/dev/video1)
+```
+
+| Option | What it does |
+| --- | --- |
+| `--model models/<run>` | which of your models to use (default: the best test mAP50-95) |
+| `--threshold 0.2` | starting value of the threshold slider (default 0.3) |
+| `--resolution 1280x720` | camera resolution (default 640x480) |
+| `--nms 0` | keep overlapping boxes of the same label (default 0.5 removes duplicates) |
+| `--fp32` | run in float32 instead of float16: slower, for comparison |
+| `--port 7861` | use another port, then open `http://localhost:7861` |
+
+### Things to try
+
+- **Your three models:** restart the page with each `--model` and compare the scores on the same objects.
+- **Trained vs. new words:** compare the scores for a trained class and an object you never labeled.
+- **Threshold:** find the value where the wrong boxes disappear but the right ones stay.
+- **Speed:** note the FPS and time per frame in the status line, then restart with `--fp32` and compare.
+- **Real conditions:** try other lighting, distances and backgrounds than in your training photos.
+
+---
+
+## Common problems in Part 2
+
+| Problem | Fix |
+| --- | --- |
+| `Unable to find image 'owlvit-jetson:1.0'` | The Jetson isn't prepared yet. Ask your instructor. |
+| `error gathering device information ... "/dev/video0"` | No camera is connected. Plug it in, or remove the `--device /dev/video0` line. |
+| `GPU ready: False`, or `CUDA-enabled PyTorch is required` | You left out `--runtime nvidia` in step 8. |
+| `scp`: `Connection timed out` or `No route to host` | The Jetson can't reach the DGX. Check `DGX-IP`, then ask your instructor. |
+| `scp`: `Permission denied, please try again` | Use your DGX password, `spark#-group#`. |
+| `scp`: `No such file or directory` | Run the export first (step 7). |
+| `No space left on device` | Delete the copied file: `rm owlvit_jetson.tar` (in the container, in `/workspace`). |
+| The page shows "Can't open camera" | Another program is using the camera, or it's a different number: try `--source 1`. |
+| `is not an exported model folder` | Run the scripts from `/workspace`, and check `ls models`. |
+| `Killed`, or the Jetson freezes | It ran out of memory. Close other programs and browser tabs, and run only one `web_demo.py` at a time. |
+| Very slow (1 to 2 FPS) | Check that the status line shows `Orin` and `float16`, not `CPU`. Ask your instructor to set the Jetson to full power. |
+| Upload says "Can't read that file" | Upload a JPG or PNG. iPhone HEIC photos aren't supported. |
+
+---
+
+# Lab report
+
+## What each run records
+
+Every training run saves its record in `~/weights/<RUN_NAME>/metrics/` on the DGX. The export
+(step 7) copies it to `lab_report/<RUN_NAME>/` on the Jetson, where `plot_results.py` (step 10)
+turns it into figures.
+
+| File | What it contains |
+| --- | --- |
+| `epoch_history.csv` | One row per epoch. Training and validation loss: total, classification, L1 and GIoU. Validation mAP50, mAP50-95 and mAP75. Learning rate, time and GPU memory. Epoch 0 is the original OWL-ViT before training. |
+| `step_history.csv` | One row per training step: the loss and its three parts, and the learning rate. |
+| `val_per_class_history.csv` | Validation AP50 and AP50-95 for every class after every epoch. |
+| `test_per_class.csv` | Final test AP per class, for your fine-tuned model and for the original OWL-ViT. |
+| `test_pr_curve.csv` | Precision-recall curve on the test images for every class (IoU 0.5), for both models. |
+| `run_summary.json` | Your settings, the dataset size (images and boxes per class and split), trainable parameters, best epoch, training time, peak GPU memory, and the final test scores. |
+
 ## What to put in your lab report
 
 1. **Title:** group number, members, and which DGX you used.
@@ -717,7 +642,7 @@ This saves the figures and a results table in `lab_report/figures/`:
    - **Annotation:** how you labeled the photos in CVAT, and how many boxes there are per class (`fig0`).
    - **Preprocessing:** conversion to PNG, resizing to 768 × 768 with box rescaling, and the
      70 / 15 / 15 split. Give the images and boxes per split.
-   - **Examples:** 2–3 images from `dataset_preview` showing your boxes.
+   - **Examples:** 2–3 images from `lab_report/dataset_preview` showing your boxes.
 4. **Method**
    - **The model:** OWL-ViT in a few sentences, covering the image encoder, the text encoder and
      prompts, and the class and box heads.
@@ -731,8 +656,10 @@ This saves the figures and a results table in `lab_report/figures/`:
      mAP50-95, best epoch, training time and peak GPU memory (`results_table.csv`, `fig6`).
    - **Figures:** `fig1` (loss), `fig2` (validation mAP), `fig7` (AP per class) and `fig8`
      (precision-recall), each with a caption.
-   - **Example detections:** 3–4 images from the `predictions_*` folders, including at least one
-     correct detection and one mistake.
+   - **Example detections:** 3–4 images from the `lab_report/predictions_*` folders, including at
+     least one correct detection and one mistake.
+   - **On the Jetson:** the FPS and time per frame from the web page's status line for your best
+     model, and 1–2 screenshots of the live page (press `PrtSc` on the Jetson).
 6. **Discussion.** Answer these questions:
    - **Fine-tuning:** how much did fine-tuning improve on the original OWL-ViT? Which classes
      improved most and least, and why?
@@ -740,7 +667,8 @@ This saves the figures and a results table in `lab_report/figures/`:
      loss fell and the final accuracy (`fig1`, `fig2`, `fig5`).
    - **Combination 3 vs 1:** what did training the image encoder change? Consider accuracy, the
      training/validation loss gap (overfitting?), time and memory.
-   - **Deployment:** which combination would you deploy, and why?
+   - **Deployment:** which combination would you deploy on the Jetson, and why? How did it do on
+     the live camera compared with the test images?
    - **Mistakes:** what kinds of mistakes does the model make (missed objects, wrong class, loose
      boxes), and what might cause them?
    - **Next steps:** what would you try next to improve the model?
@@ -751,8 +679,24 @@ This saves the figures and a results table in `lab_report/figures/`:
 
 # For the instructor
 
-- **Installing Docker on the Jetson** (once, needs internet). JetPack 6 doesn't always include
-  Docker. These are the steps from NVIDIA's Jetson AI Lab setup guide:
+- **Preparing each Jetson** (once, needs internet and about 15 GB of free disk space). In a
+  terminal on the Jetson:
+
+  ```bash
+  cat /etc/nv_tegra_release                       # must start with "# R36" (JetPack 6)
+  sudo docker pull dustynv/pytorch:2.1-r36.2.0
+  mkdir -p ~/owlvit-image && cd ~/owlvit-image
+  scp groupXX@DGX-IP:/home/share/owlvit_lab/jetson/Dockerfile .     # any group account works
+  sudo docker build -t owlvit-jetson:1.0 .
+  sudo docker run --rm --runtime nvidia owlvit-jetson:1.0 \
+      python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+  ```
+
+  The last command should print `True` and the GPU name, for example `True Orin`. The image adds
+  scp, Pillow, OpenCV, pandas, matplotlib and `transformers` 4.46.3 (the DGX version) to the
+  PyTorch container. The Jetson must be able to reach the DGX over SSH (port 22).
+- **Installing Docker on the Jetson** (if `docker` is missing). These are the steps from NVIDIA's
+  Jetson AI Lab setup guide:
 
   ```bash
   sudo apt update && sudo apt install -y nvidia-container curl
@@ -761,6 +705,7 @@ This saves the figures and a results table in `lab_report/figures/`:
   sudo systemctl restart docker
   ```
 
+- **Full speed:** `sudo jetson_clocks` on the Jetson.
 - **Jetson without internet:** build the image on any arm64 machine with Docker, for example a
   DGX Spark, and copy it over:
 
@@ -769,6 +714,8 @@ This saves the figures and a results table in `lab_report/figures/`:
   gunzip -c owlvit-jetson.tar.gz | sudo docker load                       # on the Jetson
   ```
 
+- **Several groups on one Jetson:** each group's files are in its own `~/owlvit_groupXX`. Two
+  web pages at the same time need different ports (`--port 7861`).
 - **Testing on a DGX Spark:** the Jetson container runs there too, but only on the CPU, because
   its PyTorch build only includes GPU code for Orin (sm_87). Use the same commands without
   `--runtime nvidia` and `--device`. `web_demo.py` switches to the CPU by itself; add `--cpu` to
