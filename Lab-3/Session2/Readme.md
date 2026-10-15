@@ -4,9 +4,9 @@ This lab has two parts:
 
 - **Part 1, training on the DGX (steps 1–6):** upload your CVAT dataset from your laptop to the
   DGX, prepare it, and fine-tune OWL-ViT on the DGX's GPU with three different settings.
-- **Part 2, on the Jetson Orin Nano (steps 7–12):** copy your trained models and training data
-  from the DGX to the Jetson, make the lab report plots, and run your models live on a camera,
-  with a web page where you type what to detect.
+- **Part 2, on the Jetson Orin Nano (steps 7–13):** set up the Jetson, copy your trained models
+  and training data from the DGX to it, make the lab report plots, and run your models live on a
+  camera, with a web page where you type what to detect.
 
 Your laptop is only used to upload your dataset and to log in to the DGX. Nothing is downloaded
 to it: after training, everything goes to the Jetson. The **lab report** section at the end lists
@@ -25,6 +25,7 @@ You need:
 | The COCO JSON file(s) exported from CVAT | `instances_default.json` (one, or one per CVAT task) |
 | **For Part 2:** a Jetson Orin Nano with a screen, keyboard and mouse | one per group, shown in class |
 | **For Part 2:** the Jetson login and password | given in class |
+| **For Part 2:** internet on the Jetson and about 15 GB of free disk space | only for the one-time setup in step 8 |
 | **For Part 2:** a USB webcam plugged into the Jetson | optional: you can also test with photos |
 
 To get the JSON from CVAT, export your task or project with the format **COCO 1.0**. Unzip the
@@ -42,9 +43,9 @@ Each command block says where to run it:
   You use it only to upload your dataset (step 2) and to log in to the DGX (step 1).
 - **DGX** means your SSH session on the DGX.
 - **Container** means inside the DGX training container, after step 3.
-- **Jetson terminal** means a terminal on the Jetson's desktop. You use it only to start the
-  Jetson container (step 8).
-- **Jetson container** means inside the PyTorch container on the Jetson, after step 8. Everything
+- **Jetson terminal** means a terminal on the Jetson's desktop. You use it only to set up the
+  Jetson (step 8) and to start the Jetson container (step 9).
+- **Jetson container** means inside the PyTorch container on the Jetson, after step 9. Everything
   else on the Jetson runs here.
 
 All the scripts are already in your `~/code` folder on the DGX. You only edit one block of
@@ -55,8 +56,8 @@ settings in `train_owlvit.py`.
 | `preprocess.py` | DGX container | Prepares your dataset (step 4) |
 | `train_owlvit.py` | DGX container | Fine-tunes OWL-ViT (steps 5 and 6) |
 | `export_jetson.py` | DGX container | Packs your models and training data for the Jetson (step 7) |
-| `plot_results.py` | Jetson container | Makes the lab report figures (step 10) |
-| `jetson/` | Jetson container | A one-photo test and the live web page (steps 11 and 12) |
+| `plot_results.py` | Jetson container | Makes the lab report figures (step 11) |
+| `jetson/` | Jetson container | A one-photo test and the live web page (steps 12 and 13) |
 
 > Tip: avoid spaces in folder and file names. If a name has spaces, put the whole path in quotes.
 
@@ -200,7 +201,7 @@ val and test. Fix anything marked `WARNING` before training. Files it can't use 
 broken photos, photos not in any JSON) are listed and skipped, not fatal.
 
 The `preview` images (your photos with their boxes drawn) are copied to the Jetson with everything
-else, where you can look at them (step 9).
+else, where you can look at them (step 10).
 
 You can run the script again at any time. It replaces the old `processed` folder.
 
@@ -385,9 +386,9 @@ After training, everything goes from the DGX to the Jetson Orin Nano: your train
 everything recorded during training, the test predictions and your dataset previews. On the Jetson
 you make the lab report plots and run your models live on a camera.
 
-On the Jetson, everything runs **inside the PyTorch container** (`dustynv/pytorch:2.1-r36.2.0`,
-prepared by your instructor as `owlvit-jetson:1.0`). The Jetson's own terminal is used only to
-start the container (step 8).
+On the Jetson, everything runs **inside the PyTorch container** `owlvit-jetson:1.0`, which you
+build from `dustynv/pytorch:2.1-r36.2.0` in step 8. The Jetson's own terminal is used only to
+set up the Jetson (step 8) and to start the container (step 9).
 
 ## 7. Export everything on the DGX
 
@@ -421,11 +422,99 @@ On the Jetson, the file unpacks to:
 
 ---
 
-## 8. Start the container on the Jetson
+## 8. Set up the Jetson (once per Jetson)
+
+The Jetson container `owlvit-jetson:1.0` is the PyTorch container `dustynv/pytorch:2.1-r36.2.0`
+with scp, Pillow, OpenCV, pandas, matplotlib and `transformers` 4.46.3 (the DGX version) added.
+You build it once on each Jetson. It needs internet on the Jetson and about 15 GB of free disk
+space. You can do this step while your models are training.
 
 Log in on the Jetson's desktop and open a terminal.
 
-**Jetson terminal:** this is the only command you run outside the container:
+### Check the Jetson
+
+**Jetson terminal:**
+
+```bash
+cat /etc/nv_tegra_release                       # must start with "# R36" (JetPack 6)
+sudo docker images owlvit-jetson                # is the image already built?
+```
+
+- **Password:** `sudo` asks for the Jetson password.
+- **Already built:** if the second command lists `owlvit-jetson` with the tag `1.0` (for example
+  because another group set up this Jetson), skip the rest of this step and go to step 9.
+- **`docker: command not found`:** Docker isn't installed yet. Install it first (next section).
+
+### Install Docker (only if it's missing)
+
+These are the steps from NVIDIA's Jetson AI Lab setup guide.
+
+**Jetson terminal:**
+
+```bash
+sudo apt update && sudo apt install -y nvidia-container curl
+curl https://get.docker.com | sh && sudo systemctl --now enable docker
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+### Build the image
+
+**Jetson terminal:**
+
+```bash
+sudo docker pull dustynv/pytorch:2.1-r36.2.0
+mkdir -p ~/owlvit-image && cd ~/owlvit-image
+scp groupXX@DGX-IP:/home/share/owlvit_lab/jetson/Dockerfile .
+sudo docker build -t owlvit-jetson:1.0 .
+```
+
+- **`scp`** copies the image's recipe (the `Dockerfile`) from the DGX. Use your DGX password,
+  `spark#-group#`, and type `yes` if you're asked "Are you sure you want to continue connecting?".
+  The Jetson must be able to reach the DGX over SSH (port 22).
+- **The download and build take a while.** Wait until the prompt comes back.
+
+**Jetson terminal:** check that the image can use the GPU:
+
+```bash
+sudo docker run --rm --runtime nvidia owlvit-jetson:1.0 \
+    python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+It should print `True` and the GPU name, for example `True Orin`.
+
+### Set the Jetson to full speed
+
+**Jetson terminal:**
+
+```bash
+sudo jetson_clocks
+```
+
+This gives the best FPS in step 13. Run it again after the Jetson restarts.
+
+### No internet on the Jetson?
+
+Build the image on any arm64 machine with Docker, for example a DGX Spark, with the same
+`docker pull` and `docker build` commands. Then save it to a file, copy the file to the Jetson,
+and load it there:
+
+```bash
+sudo docker save owlvit-jetson:1.0 | gzip > owlvit-jetson.tar.gz      # on the build machine
+gunzip -c owlvit-jetson.tar.gz | sudo docker load                       # on the Jetson
+```
+
+### Testing on a DGX Spark
+
+The Jetson container also runs on a DGX Spark, but only on the CPU, because its PyTorch build only
+includes GPU code for Orin (sm_87). Use the same commands without `--runtime nvidia` and
+`--device`. `web_demo.py` switches to the CPU by itself; add `--cpu` to `detect_image.py`.
+
+---
+
+## 9. Start the container on the Jetson
+
+**Jetson terminal:** this is the last command you run outside the container:
 
 ```bash
 sudo docker run --runtime nvidia -it --rm --network host \
@@ -442,6 +531,8 @@ sudo docker run --runtime nvidia -it --rm --network host \
 - **`-v ~/owlvit_groupXX:/workspace`** is your group's folder on the Jetson. It is created the
   first time. Everything in `/workspace` is kept there; anything else in the container is deleted
   when you leave it.
+- **Several groups on one Jetson:** each group's files are in its own `~/owlvit_groupXX`. Two web
+  pages at the same time need different ports (`--port 7861`, step 13).
 
 **Jetson container:** check:
 
@@ -455,7 +546,7 @@ your files are still in `~/owlvit_groupXX`.
 
 ---
 
-## 9. Copy your models and data from the DGX
+## 10. Copy your models and data from the DGX
 
 **Jetson container:**
 
@@ -478,7 +569,7 @@ rotated, tell the instructor. Then look at the `lab_report/predictions_*` folder
 
 ---
 
-## 10. Make the lab report plots
+## 11. Make the lab report plots
 
 **Jetson container:**
 
@@ -505,7 +596,7 @@ Files app.
 
 ---
 
-## 11. Test a model on one photo
+## 12. Test a model on one photo
 
 **Jetson container:**
 
@@ -524,7 +615,7 @@ prompts from `prompts.json`. It is a good first check that the model works on th
 
 ---
 
-## 12. Run the live web page
+## 13. Run the live web page
 
 **Jetson container:**
 
@@ -599,9 +690,11 @@ python3 web_demo.py --source 1                # the second camera (/dev/video1)
 
 | Problem | Fix |
 | --- | --- |
-| `Unable to find image 'owlvit-jetson:1.0'` | The Jetson isn't prepared yet. Ask your instructor. |
+| `Unable to find image 'owlvit-jetson:1.0'` | The image isn't built on this Jetson yet. Do step 8. |
+| `docker: command not found` | Docker isn't installed. Install it in step 8. |
+| `unknown or invalid runtime name: nvidia` | Docker isn't set up for the GPU. Run the last two commands of "Install Docker" in step 8. |
 | `error gathering device information ... "/dev/video0"` | No camera is connected. Plug it in, or remove the `--device /dev/video0` line. |
-| `GPU ready: False`, or `CUDA-enabled PyTorch is required` | You left out `--runtime nvidia` in step 8. |
+| `GPU ready: False`, or `CUDA-enabled PyTorch is required` | You left out `--runtime nvidia` in step 9. |
 | `scp`: `Connection timed out` or `No route to host` | The Jetson can't reach the DGX. Check `DGX-IP`, then ask your instructor. |
 | `scp`: `Permission denied, please try again` | Use your DGX password, `spark#-group#`. |
 | `scp`: `No such file or directory` | Run the export first (step 7). |
@@ -609,7 +702,7 @@ python3 web_demo.py --source 1                # the second camera (/dev/video1)
 | The page shows "Can't open camera" | Another program is using the camera, or it's a different number: try `--source 1`. |
 | `is not an exported model folder` | Run the scripts from `/workspace`, and check `ls models`. |
 | `Killed`, or the Jetson freezes | It ran out of memory. Close other programs and browser tabs, and run only one `web_demo.py` at a time. |
-| Very slow (1 to 2 FPS) | Check that the status line shows `Orin` and `float16`, not `CPU`. Ask your instructor to set the Jetson to full power. |
+| Very slow (1 to 2 FPS) | Check that the status line shows `Orin` and `float16`, not `CPU`. Set the Jetson to full speed with `sudo jetson_clocks` (step 8). |
 | Upload says "Can't read that file" | Upload a JPG or PNG. iPhone HEIC photos aren't supported. |
 
 ---
@@ -619,7 +712,7 @@ python3 web_demo.py --source 1                # the second camera (/dev/video1)
 ## What each run records
 
 Every training run saves its record in `~/weights/<RUN_NAME>/metrics/` on the DGX. The export
-(step 7) copies it to `lab_report/<RUN_NAME>/` on the Jetson, where `plot_results.py` (step 10)
+(step 7) copies it to `lab_report/<RUN_NAME>/` on the Jetson, where `plot_results.py` (step 11)
 turns it into figures.
 
 | File | What it contains |
@@ -674,51 +767,3 @@ turns it into figures.
    - **Next steps:** what would you try next to improve the model?
 7. **Conclusion:** 3–5 sentences.
 8. **Appendix:** the `run_summary.json` settings of each run, and any extra runs you tried.
-
----
-
-# For the instructor
-
-- **Preparing each Jetson** (once, needs internet and about 15 GB of free disk space). In a
-  terminal on the Jetson:
-
-  ```bash
-  cat /etc/nv_tegra_release                       # must start with "# R36" (JetPack 6)
-  sudo docker pull dustynv/pytorch:2.1-r36.2.0
-  mkdir -p ~/owlvit-image && cd ~/owlvit-image
-  scp groupXX@DGX-IP:/home/share/owlvit_lab/jetson/Dockerfile .     # any group account works
-  sudo docker build -t owlvit-jetson:1.0 .
-  sudo docker run --rm --runtime nvidia owlvit-jetson:1.0 \
-      python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-  ```
-
-  The last command should print `True` and the GPU name, for example `True Orin`. The image adds
-  scp, Pillow, OpenCV, pandas, matplotlib and `transformers` 4.46.3 (the DGX version) to the
-  PyTorch container. The Jetson must be able to reach the DGX over SSH (port 22).
-- **Installing Docker on the Jetson** (if `docker` is missing). These are the steps from NVIDIA's
-  Jetson AI Lab setup guide:
-
-  ```bash
-  sudo apt update && sudo apt install -y nvidia-container curl
-  curl https://get.docker.com | sh && sudo systemctl --now enable docker
-  sudo nvidia-ctk runtime configure --runtime=docker
-  sudo systemctl restart docker
-  ```
-
-- **Full speed:** `sudo jetson_clocks` on the Jetson.
-- **Jetson without internet:** build the image on any arm64 machine with Docker, for example a
-  DGX Spark, and copy it over:
-
-  ```bash
-  sudo docker save owlvit-jetson:1.0 | gzip > owlvit-jetson.tar.gz      # on the build machine
-  gunzip -c owlvit-jetson.tar.gz | sudo docker load                       # on the Jetson
-  ```
-
-- **Several groups on one Jetson:** each group's files are in its own `~/owlvit_groupXX`. Two
-  web pages at the same time need different ports (`--port 7861`).
-- **Testing on a DGX Spark:** the Jetson container runs there too, but only on the CPU, because
-  its PyTorch build only includes GPU code for Orin (sm_87). Use the same commands without
-  `--runtime nvidia` and `--device`. `web_demo.py` switches to the CPU by itself; add `--cpu` to
-  `detect_image.py`.
-- **Where the files are:** every group's `~/code` holds all the scripts. Fresh copies are in
-  `/home/share/owlvit_lab` on each DGX.
