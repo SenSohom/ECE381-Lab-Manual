@@ -4,12 +4,6 @@ In this lab you run two generative AI web UIs on an NVIDIA DGX Spark and measure
 
 ## Stations and ports
 
-| Station | Hostname   | IP address      |
-| ------- | ---------- | --------------- |
-| spark1  | spark-fb6b | xxx |
-| spark2  | spark-e881 | xxx |
-| spark3  | spark-7459 | xxx |
-
 | Group   | Stable Diffusion port (`SD_PORT`) | Text Generation port (`TG_PORT`) |
 | ------- | --------------------------------- | -------------------------------- |
 | group01 | 7861 | 7961 |
