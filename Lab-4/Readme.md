@@ -74,12 +74,6 @@ sd-webui stop
 
 Leave everything else at its default (Hires. fix and Refiner off). For each run, take a screenshot of the image **together with the info text under it**, and copy the "Time taken" value into the Time column.
 
-**Run 10 (the grid):** at the bottom of the txt2img tab, open **Script** and choose **X/Y/Z plot**.
-
-- **X type:** `Sampler`, **X values:** `DPM++ 2M, Euler a, DPM++ 2M SDE, DPM adaptive, LCM`
-- **Y type:** `Schedule type`, **Y values:** `Karras, Uniform, Exponential, Align Your Steps, Beta`
-- Click **Generate**. It takes 2–3 minutes. Screenshot the whole grid, then set **Script** back to **None**.
-
 ### Lab report table
 
 | Run | What it tests | Sampling method | Schedule type | Steps | CFG | Seed | Batch count | Batch size | Time (s) | Screenshot | Remarks vs baseline |
