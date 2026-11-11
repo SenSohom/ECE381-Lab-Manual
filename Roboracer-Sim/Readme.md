@@ -3,12 +3,6 @@
 Your group works on one of three DGX Spark computers. Your instructor tells you **which Spark**, your
 **group number** and your **password**.
 
-| Spark | Address |
-|---|---|
-| Spark 1 | `128.235.248.212` |
-| Spark 2 | `128.235.248.197` |
-| Spark 3 | `128.235.248.16` |
-
 | Group | Account | Simulator port |
 |---|---|---|
 | 01 | `finalproject-group01` | `8701` |
